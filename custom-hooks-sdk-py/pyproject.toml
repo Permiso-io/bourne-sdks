@@ -1,0 +1,45 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "permiso-custom-hooks-sdk"
+version = "0.1.1"
+description = "SDK for Permiso Custom Hooks API — send hook events with automatic run handling"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.9"
+authors = [{ name = "devel-permiso-io" }]
+keywords = ["permiso", "hooks", "sdk", "security"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7", "ruff", "python-dotenv>=1.0.0"]
+
+[project.urls]
+Repository = "https://github.com/Permiso-io/arbiter"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/permiso_custom_hooks"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/permiso_custom_hooks"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]

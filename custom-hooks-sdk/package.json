@@ -1,0 +1,46 @@
+{
+  "name": "@permiso-io/custom-hooks-sdk",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/permiso-io/bourne-sdks.git",
+    "directory": "custom-hooks-sdk"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "version": "0.1.1",
+  "description": "SDK for Permiso Custom Hooks API — send hook events with automatic run handling",
+  "license": "MIT",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "files": [
+    "lib/**/*"
+  ],
+  "scripts": {
+    "check:format": "eslint --ext=ts,js --quiet src",
+    "fix:format": "eslint --fix --quiet --ext=ts,js src",
+    "test": "TZ=UTC jest",
+    "clean": "rimraf ./lib",
+    "build": "yarn run clean && tsc",
+    "prepare": "yarn run build",
+    "example:send": "node examples/send-test-event.cjs"
+  },
+  "author": "devel-permiso-io",
+  "devDependencies": {
+    "dotenv": "^16.4.5",
+    "@types/jest": "^29.0.0",
+    "@types/node": "^18.0.0",
+    "@typescript-eslint/eslint-plugin": "^5.0.0",
+    "@typescript-eslint/parser": "^5.0.0",
+    "eslint": "^8.0.0",
+    "jest": "^29.0.0",
+    "rimraf": "^4.3.1",
+    "ts-jest": "^29.0.0",
+    "typescript": "^5.0.2"
+  },
+  "dependencies": {},
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
