@@ -28,13 +28,19 @@ const client = new PermisoCustomHooksClient({
 
 console.log(client.getRunId()); // runId generated in the constructor
 
-await client.sendEvent("user_prompt", { source: "user", type:"text", text: "Hello World" });
+await client.sendEvent("user_prompt", { source: "user", type: "text", text: "Hello World" });
 
 // Close out this run: sends a "stop" event, then rotates to a new runId
 await client.endRun();
 
 // Subsequent calls use the new runId automatically
-await client.sendEvent("web_fetch", { source: "agent", type: "tool_use", name: "WebFetch", input: "https://example.com" });
+await client.sendEvent("web_fetch", {
+  source: "agent",
+  type: "tool_use",
+  name: "WebFetch",
+  toolUseId: "toolu_01abc",
+  input: { url: "https://example.com" },
+});
 ```
 
 ## Request body shape
@@ -45,20 +51,90 @@ Every request posts to `{baseUrl}/hooks` with a JSON body shaped like this:
 {
   "hookEvent": "my_custom_event",
   "runId": "b1f0c3d4-....-uuid",
+  "bourneVersion": "v2",
   "sessionId": "optional-if-set",
   "user": { "email": "jane@example.com", "id": "user-123", "name": "Jane" },
-  "event": {
-    "source": "user|agent|stop",
-    "type": "text|thinking|tool_use|tool_result|image|document"
-  }
+  "event": { }
 }
 ```
 
 - `hookEvent` — the event name passed to `sendEvent`.
 - `runId` — the current run ID, at the top level of the body.
+- `bourneVersion` — always `"v2"`; set by the SDK on every request.
 - `sessionId` — *(optional)* included only if configured via the `sessionId` option or `setSessionId`.
 - `user` — *(optional)* included only if configured via the `user` option or `setUser`; contains any subset of `email`, `id`, and `name`.
-- `event` — an object containing whatever `data` you passed to `sendEvent` (or `{}` if you didn't pass any).
+- `event` — the payload for this hook; see [Event payload (`event`)](#event-payload-event) below. When you omit `data` in `sendEvent`, the SDK sends `"event": {}`.
+
+### Event payload (`event`)
+
+The backend expects `event` to match **one** of the shapes below. For `source: "user"` and `source: "agent"`, `type` selects the variant. For `source: "stop"`, there is no `type` field.
+
+On every variant, these fields are optional unless noted otherwise:
+
+| Field | Description |
+|-------|-------------|
+| `eventId` | Stable id for this event (string). |
+| `timestamp` | Epoch milliseconds (number) or ISO-8601 string. |
+
+**Blob objects** (for `image` / `document` events):
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `source` | yes | Origin label for the blob (string). |
+| `data` | yes | Payload (e.g. base64). |
+| `mediaType` | no | MIME type (string). |
+
+**Agent-only optional fields** (allowed only when `source` is `"agent"`; omit on `source: "user"`):
+
+`model` (string), `temperature`, `maxTokens`, `topP`, `topK` (numbers) — all optional.
+
+#### `source: "user"` (content)
+
+| `type` | Required fields | Optional fields |
+|--------|-----------------|-----------------|
+| `"text"` | `text` | — |
+| `"thinking"` | `thinking` | `thinkingBudget`, `signature` |
+| `"tool_use"` | `name`, `toolUseId` | `input` (any JSON) |
+| `"tool_result"` | `toolUseId` | `content`, `isError` |
+| `"image"` | `image` (blob) | — |
+| `"document"` | `document` (blob) | — |
+
+#### `source: "agent"` (content)
+
+Same rows as for `"user"`, plus the **agent-only optional fields** above on the same object.
+
+#### `source: "stop"` (run end)
+
+No `type` property.
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `source` | yes | Must be `"stop"`. |
+| `stopReason` | no | One of: `"end_turn"`, `"max_tokens"`, `"stop_sequence"`, `"tool_use"`, `"content_filter"`. The TypeScript client’s `endRun(stopReason?)` defaults this to `"end_turn"`. |
+| `usage` | no | Token usage object (see below). |
+
+**`usage`** when present:
+
+```json
+{
+  "inputTokens": 0,
+  "outputTokens": 0,
+  "totalTokens": 0,
+  "cacheReadTokens": 0,
+  "cacheWriteTokens": 0,
+  "cost": {
+    "inputTokensCost": 0,
+    "outputTokensCost": 0,
+    "cacheReadTokensCost": 0,
+    "cacheWriteTokensCost": 0,
+    "currency": "USD"
+  }
+}
+```
+
+`cacheReadTokens`, `cacheWriteTokens`, and `cost` are optional; when `cost` is set, all of its fields are required as shown.
+
+Do not send properties that are not listed for a variant if your integration is validated strictly (unknown keys may be rejected).
 
 ## Configuration
 
@@ -85,8 +161,8 @@ Run state is kept in memory only. If your process restarts, a new `runId` is gen
 ### `PermisoCustomHooksClient`
 
 - **`constructor(config: PermisoCustomHooksConfig)`** — Creates a client with `apiKey` and optional `baseUrl` (defaults to `https://alb.permiso.io`). Also accepts optional `systemPrompt`, `sessionId`, and `user`. Generates an initial `runId`.
-- **`sendEvent(eventName: string, data?: Record<string, unknown>): Promise<CustomHooksResponse>`** — Sends a hook event. Posts `{ hookEvent: eventName, runId, event: data ?? {} }` to `{baseUrl}/hooks`, with top-level `sessionId` and `user` included when configured. Returns the API response.
-- **`endRun(): Promise<CustomHooksResponse>`** — Sends a `stop` event for the current run, then rotates to a new `runId` for subsequent calls. Also resets the per-run system-prompt flag so the prompt is re-emitted for the next run.
+- **`sendEvent(eventName: string, data?: Record<string, unknown>): Promise<CustomHooksResponse>`** — Sends a hook event. Posts `{ hookEvent: eventName, runId, event: data ?? {}, bourneVersion: "v2" }` to `{baseUrl}/hooks`, with top-level `sessionId` and `user` included when configured. Returns the API response.
+- **`endRun(stopReason?: string): Promise<CustomHooksResponse>`** — Sends a `stop` hook with `event` `{ source: "stop", stopReason }` (default `stopReason`: `"end_turn"`), then rotates to a new `runId` for subsequent calls. Also resets the per-run system-prompt flag so the prompt is re-emitted for the next run.
 - **`getRunId(): string`** — Returns the current run ID (useful for logging, debugging, or correlating client-side logs with dashboard entries).
 - **`setSystemPrompt(prompt: string | undefined): void`** — Sets (or clears) the system prompt. When set, the SDK sends a dedicated `system_prompt` event before the first event of each run (payload: `{ source: "system", type: "text", text: <prompt> }`). If the first event of the current run has already been sent, the prompt is emitted before the first event of the next run.
 - **`setSessionId(sessionId: string | undefined): void`** — Sets (or clears) the session id attached as a top-level `sessionId` on every subsequent request.

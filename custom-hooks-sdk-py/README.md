@@ -30,7 +30,8 @@ client.send_event(
         "source": "agent",
         "type": "tool_use",
         "name": "WebFetch",
-        "input": "https://example.com",
+        "toolUseId": "toolu_01abc",
+        "input": {"url": "https://example.com"},
     },
 )
 ```
@@ -43,20 +44,90 @@ Every request POSTs to `{base_url}/hooks` with a JSON body shaped like this:
 {
   "hookEvent": "my_custom_event",
   "runId": "b1f0c3d4-....-uuid",
+  "bourneVersion": "v2",
   "sessionId": "optional-if-set",
   "user": { "email": "jane@example.com", "id": "user-123", "name": "Jane" },
-  "event": {
-    "source": "user|agent|stop",
-    "type": "text|thinking|tool_use|tool_result|image|document"
-  }
+  "event": { }
 }
 ```
 
 - `hookEvent` — the event name passed to `send_event`.
 - `runId` — the current run ID, at the top level of the body.
+- `bourneVersion` — always `"v2"`; set by the SDK on every request.
 - `sessionId` — *(optional)* included only if configured via the `session_id` option or `set_session_id`.
 - `user` — *(optional)* included only if configured via the `user` option or `set_user`; contains any subset of `email`, `id`, and `name`.
-- `event` — an object containing whatever `data` you passed to `send_event` (or `{}` if you didn't pass any).
+- `event` — the payload for this hook; see [Event payload (`event`)](#event-payload-event) below. When you omit `data` in `send_event`, the SDK sends `"event": {}`.
+
+### Event payload (`event`)
+
+The backend expects `event` to match **one** of the shapes below. For `source` `"user"` and `"agent"`, `type` selects the variant. For `source` `"stop"`, there is no `type` field.
+
+On every variant, these fields are optional unless noted otherwise:
+
+| Field | Description |
+|-------|-------------|
+| `eventId` | Stable id for this event (string). |
+| `timestamp` | Epoch milliseconds (number) or ISO-8601 string. |
+
+**Blob objects** (for `image` / `document` events):
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `source` | yes | Origin label for the blob (string). |
+| `data` | yes | Payload (e.g. base64). |
+| `mediaType` | no | MIME type (string). |
+
+**Agent-only optional fields** (allowed only when `source` is `"agent"`; omit on `source` `"user"`):
+
+`model` (string), `temperature`, `maxTokens`, `topP`, `topK` (numbers) — all optional.
+
+#### `source: "user"` (content)
+
+| `type` | Required fields | Optional fields |
+|--------|-----------------|-----------------|
+| `"text"` | `text` | — |
+| `"thinking"` | `thinking` | `thinkingBudget`, `signature` |
+| `"tool_use"` | `name`, `toolUseId` | `input` (any JSON) |
+| `"tool_result"` | `toolUseId` | `content`, `isError` |
+| `"image"` | `image` (blob) | — |
+| `"document"` | `document` (blob) | — |
+
+#### `source: "agent"` (content)
+
+Same rows as for `"user"`, plus the **agent-only optional fields** above on the same dict.
+
+#### `source: "stop"` (run end)
+
+No `type` property.
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `source` | yes | Must be `"stop"`. |
+| `stopReason` | no | One of: `"end_turn"`, `"max_tokens"`, `"stop_sequence"`, `"tool_use"`, `"content_filter"`. `end_run()` currently sends only `{"source": "stop"}`; you may add `stopReason` and `usage` in custom `send_event("stop", ...)` calls if needed. |
+| `usage` | no | Token usage object (see below). |
+
+**`usage`** when present:
+
+```json
+{
+  "inputTokens": 0,
+  "outputTokens": 0,
+  "totalTokens": 0,
+  "cacheReadTokens": 0,
+  "cacheWriteTokens": 0,
+  "cost": {
+    "inputTokensCost": 0,
+    "outputTokensCost": 0,
+    "cacheReadTokensCost": 0,
+    "cacheWriteTokensCost": 0,
+    "currency": "USD"
+  }
+}
+```
+
+`cacheReadTokens`, `cacheWriteTokens`, and `cost` are optional; when `cost` is set, all of its fields are required as shown.
+
+Do not send properties that are not listed for a variant if your integration is validated strictly (unknown keys may be rejected).
 
 ## Configuration
 
@@ -83,8 +154,8 @@ Run state is kept in memory only. If your process restarts, a new `run_id` is ge
 ### `PermisoCustomHooksClient`
 
 - **`__init__(config: PermisoCustomHooksConfig)`** — Creates a client with `api_key` and optional `base_url` (defaults to `https://alb.permiso.io`). Also accepts optional `system_prompt`, `session_id`, and `user`. Generates an initial `run_id`.
-- **`send_event(event_name: str, data: dict | None = None) -> dict`** — Sends a hook event. POSTs `{"hookEvent": event_name, "runId": <current>, "event": data or {}}` to `{base_url}/hooks`, with top-level `sessionId` and `user` included when configured. Returns the API response dict.
-- **`end_run() -> dict`** — Sends a `stop` event for the current run, then rotates to a new `run_id` for subsequent calls. Also resets the per-run system-prompt flag so the prompt is re-emitted for the next run.
+- **`send_event(event_name: str, data: dict | None = None) -> dict`** — Sends a hook event. POSTs `{"hookEvent": event_name, "runId": <current>, "event": data or {}, "bourneVersion": "v2"}` to `{base_url}/hooks`, with top-level `sessionId` and `user` included when configured. Returns the API response dict.
+- **`end_run() -> dict`** — Sends a `stop` hook with `event` `{"source": "stop"}` only, then rotates to a new `run_id` for subsequent calls. Also resets the per-run system-prompt flag so the prompt is re-emitted for the next run. To include `stopReason` or `usage`, use `send_event("stop", {...})` instead.
 - **`get_run_id() -> str`** — Returns the current run ID (useful for logging, debugging, or correlating client-side logs with dashboard entries).
 - **`set_system_prompt(prompt: str | None) -> None`** — Sets (or clears) the system prompt. When set, the SDK sends a dedicated `system_prompt` event before the first event of each run (payload: `{"source": "system", "type": "text", "text": <prompt>}`). If the first event of the current run has already been sent, the prompt is emitted before the first event of the next run.
 - **`set_session_id(session_id: str | None) -> None`** — Sets (or clears) the session id attached as a top-level `sessionId` on every subsequent request.
