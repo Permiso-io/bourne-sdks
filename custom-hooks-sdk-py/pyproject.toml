@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "permiso-custom-hooks-sdk"
-version = "0.1.1"
+version = "0.1.2"
 description = "SDK for Permiso Custom Hooks API — send hook events with automatic run handling"
 readme = "README.md"
 license = "MIT"
