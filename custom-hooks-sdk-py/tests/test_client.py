@@ -4,11 +4,15 @@ Tests for PermisoCustomHooksClient.
 
 import json
 from unittest.mock import MagicMock, patch
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 
 import pytest
 
-from permiso_custom_hooks import PermisoCustomHooksClient, PermisoCustomHooksConfig
+from permiso_custom_hooks import (
+    PermisoAgentContext,
+    PermisoCustomHooksClient,
+    PermisoCustomHooksConfig,
+)
 from permiso_custom_hooks.exceptions import PermisoCustomHooksError
 
 
@@ -38,7 +42,7 @@ def test_sends_request_with_expected_body_shape(config: PermisoCustomHooksConfig
     assert req.headers.get("X-hook-source") == "custom"
 
     body = json.loads(req.data.decode("utf-8"))
-    assert set(body.keys()) == {"hookEvent", "runId", "event", "bourneVersion"}
+    assert {"hookEvent", "runId", "event", "bourneVersion"}.issubset(body.keys())
     assert body["hookEvent"] == "my_event"
     assert body["bourneVersion"] == "v2"
     assert body["runId"] == client.get_run_id()
@@ -84,7 +88,7 @@ def test_end_run_sends_stop_then_rotates_run_id(config: PermisoCustomHooksConfig
     body = json.loads(req.data.decode("utf-8"))
     assert body["hookEvent"] == "stop"
     assert body["runId"] == original_run_id
-    assert body["event"] == {"source": "stop"}
+    assert body["event"] == {"source": "stop", "stopReason": "end_turn"}
 
     new_run_id = client.get_run_id()
     assert new_run_id != original_run_id
@@ -118,7 +122,9 @@ def test_uses_base_url_without_trailing_slash() -> None:
     assert req.get_full_url() == "https://api.example.com/hooks"
 
 
-def test_throws_on_non_2xx(config: PermisoCustomHooksConfig) -> None:
+def test_returns_empty_dict_on_non_2xx_when_raise_on_error_false(
+    config: PermisoCustomHooksConfig,
+) -> None:
     mock_fp = MagicMock()
     mock_fp.read.return_value = json.dumps({"error": "Invalid API key"}).encode("utf-8")
     mock_http_error = HTTPError(
@@ -128,6 +134,24 @@ def test_throws_on_non_2xx(config: PermisoCustomHooksConfig) -> None:
 
     with patch("urllib.request.urlopen", side_effect=mock_http_error):
         client = PermisoCustomHooksClient(config)
+        result = client.send_event("event")
+
+    assert result == {}
+
+
+def test_raises_on_non_2xx_when_raise_on_error_true(config: PermisoCustomHooksConfig) -> None:
+    mock_fp = MagicMock()
+    mock_fp.read.return_value = json.dumps({"error": "Invalid API key"}).encode("utf-8")
+    mock_http_error = HTTPError(
+        "https://api.example.com/hooks", 401, "Unauthorized", {}, mock_fp
+    )
+    mock_http_error.read = mock_fp.read
+
+    cfg = PermisoCustomHooksConfig(
+        api_key=config.api_key, base_url=config.base_url, raise_on_error=True
+    )
+    with patch("urllib.request.urlopen", side_effect=mock_http_error):
+        client = PermisoCustomHooksClient(cfg)
         with pytest.raises(PermisoCustomHooksError) as exc_info:
             client.send_event("event")
 
@@ -135,15 +159,29 @@ def test_throws_on_non_2xx(config: PermisoCustomHooksConfig) -> None:
     assert "Invalid API key" in (exc_info.value.body or "")
 
 
-def test_does_not_rotate_run_id_on_error(config: PermisoCustomHooksConfig) -> None:
+def test_returns_empty_on_url_error_when_raise_on_error_false(
+    config: PermisoCustomHooksConfig,
+) -> None:
+    with patch(
+        "urllib.request.urlopen",
+        side_effect=URLError("network down"),
+    ):
+        client = PermisoCustomHooksClient(config)
+        assert client.send_event("event") == {}
+
+
+def test_does_not_rotate_run_id_on_error_when_raise_true(config: PermisoCustomHooksConfig) -> None:
     error_resp = HTTPError(
         "https://api.example.com/hooks", 500, "Internal Server Error", {}, MagicMock()
     )
     error_resp.fp = MagicMock()
     error_resp.fp.read.return_value = b""
 
+    cfg = PermisoCustomHooksConfig(
+        api_key=config.api_key, base_url=config.base_url, raise_on_error=True
+    )
     with patch("urllib.request.urlopen", side_effect=error_resp):
-        client = PermisoCustomHooksClient(config)
+        client = PermisoCustomHooksClient(cfg)
         original_run_id = client.get_run_id()
         with pytest.raises(PermisoCustomHooksError):
             client.send_event("event")
@@ -151,3 +189,71 @@ def test_does_not_rotate_run_id_on_error(config: PermisoCustomHooksConfig) -> No
         with pytest.raises(PermisoCustomHooksError):
             client.end_run()
         assert client.get_run_id() == original_run_id
+
+
+def test_end_run_does_not_rotate_on_failure_when_raise_false(
+    config: PermisoCustomHooksConfig,
+) -> None:
+    with patch("urllib.request.urlopen", side_effect=URLError("boom")):
+        client = PermisoCustomHooksClient(config)
+        rid = client.get_run_id()
+        assert client.end_run() == {}
+        assert client.get_run_id() == rid
+
+
+def test_system_prompt_sent_in_agent_single_request(config: PermisoCustomHooksConfig) -> None:
+    cfg = PermisoCustomHooksConfig(
+        api_key=config.api_key, base_url=config.base_url, system_prompt="Be nice"
+    )
+    with patch("urllib.request.urlopen", return_value=_ok_response()) as mock_urlopen:
+        client = PermisoCustomHooksClient(cfg)
+        client.send_event("user_prompt", {"source": "user", "type": "text", "text": "hi"})
+
+    assert mock_urlopen.call_count == 1
+    body = json.loads(mock_urlopen.call_args[0][0].data.decode("utf-8"))
+    assert body["agent"] == {"systemPrompt": "Be nice"}
+    assert body["hookEvent"] == "user_prompt"
+
+
+def test_agent_merge_system_prompt_override(config: PermisoCustomHooksConfig) -> None:
+    cfg = PermisoCustomHooksConfig(
+        api_key=config.api_key,
+        base_url=config.base_url,
+        agent=PermisoAgentContext(name="A", system_prompt="from-agent"),
+        system_prompt="from-top",
+    )
+    with patch("urllib.request.urlopen", return_value=_ok_response()) as mock_urlopen:
+        client = PermisoCustomHooksClient(cfg)
+        client.send_event("e1")
+
+    body = json.loads(mock_urlopen.call_args[0][0].data.decode("utf-8"))
+    assert body["agent"] == {"name": "A", "systemPrompt": "from-top"}
+
+
+def test_parent_run_id_on_wire(config: PermisoCustomHooksConfig) -> None:
+    cfg = PermisoCustomHooksConfig(
+        api_key=config.api_key,
+        base_url=config.base_url,
+        parent_run_id="parent-uuid-1",
+    )
+    with patch("urllib.request.urlopen", return_value=_ok_response()) as mock_urlopen:
+        client = PermisoCustomHooksClient(cfg)
+        client.send_event("x")
+
+    body = json.loads(mock_urlopen.call_args[0][0].data.decode("utf-8"))
+    assert body["parentRunId"] == "parent-uuid-1"
+    assert body["runId"] != "parent-uuid-1"
+
+
+def test_set_agent_updates_subsequent_requests(config: PermisoCustomHooksConfig) -> None:
+    with patch("urllib.request.urlopen", return_value=_ok_response()) as mock_urlopen:
+        client = PermisoCustomHooksClient(config)
+        client.send_event("a")
+        client.set_agent(name="Sub", id="sub-9")
+        client.send_event("b")
+
+    first = json.loads(mock_urlopen.call_args_list[0][0][0].data.decode("utf-8"))
+    assert "agent" not in first
+
+    second = json.loads(mock_urlopen.call_args_list[1][0][0].data.decode("utf-8"))
+    assert second["agent"] == {"name": "Sub", "id": "sub-9"}
