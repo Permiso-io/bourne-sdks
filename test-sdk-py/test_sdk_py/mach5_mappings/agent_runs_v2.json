@@ -1,0 +1,363 @@
+{
+  "mappings": {
+    "dynamic_templates": [
+      {
+        "strings": {
+          "mapping": {
+            "type": "keyword"
+          },
+          "match_mapping_type": "string"
+        }
+      }
+    ],
+    "properties": {
+      "@timestamp": {
+        "type": "date"
+      },
+      "runId": {
+        "type": "keyword"
+      },
+      "parentRunId": {
+        "type": "keyword"
+      },
+      "sessionId": {
+        "type": "keyword"
+      },
+      "tenantId": {
+        "type": "keyword"
+      },
+      "eventIds": {
+        "type": "keyword"
+      },
+      "eventTypes": {
+        "type": "keyword"
+      },
+      "source": {
+        "type": "keyword"
+      },
+      "classification": {
+        "properties": {
+          "classifierResults": {
+            "properties": {
+              "category": {
+                "type": "keyword"
+              },
+              "classifierId": {
+                "type": "keyword"
+              },
+              "latencyMs": {
+                "type": "long"
+              },
+              "matches": {
+                "properties": {
+                  "classifierId": {
+                    "type": "keyword"
+                  },
+                  "confidence": {
+                    "type": "float"
+                  },
+                  "labels": {
+                    "type": "keyword"
+                  },
+                  "location": {
+                    "properties": {
+                      "end": {
+                        "type": "long"
+                      },
+                      "start": {
+                        "type": "long"
+                      }
+                    }
+                  },
+                  "priority": {
+                    "type": "long"
+                  },
+                  "type": {
+                    "type": "keyword"
+                  },
+                  "value": {
+                    "type": "keyword"
+                  },
+                  "eventIds": {
+                    "type": "keyword"
+                  }
+                }
+              }
+            }
+          },
+          "finalAction": {
+            "type": "keyword"
+          },
+          "reason": {
+            "type": "text"
+          },
+          "transformsApplied": {
+            "properties": {
+              "classifierId": {
+                "type": "keyword"
+              },
+              "count": {
+                "type": "long"
+              },
+              "transformType": {
+                "type": "keyword"
+              }
+            }
+          },
+          "transformedText": {
+            "type": "text"
+          },
+          "shouldBlock": {
+            "type": "boolean"
+          },
+          "evaluationLatencyMs": {
+            "type": "long"
+          },
+          "enrichmentLatencyMs": {
+            "type": "long"
+          },
+          "labels": {
+            "type": "keyword"
+          }
+        }
+      },
+      "user": {
+        "properties": {
+          "id": {
+            "type": "keyword"
+          },
+          "type": {
+            "type": "keyword"
+          },
+          "email": {
+            "type": "keyword"
+          },
+          "name": {
+            "fields": {
+              "keyword": {
+                "type": "keyword"
+              }
+            },
+            "type": "text"
+          }
+        }
+      },
+      "integration": {
+        "properties": {
+          "type": {
+            "type": "keyword"
+          },
+          "id": {
+            "type": "keyword"
+          },
+          "name": {
+            "type": "keyword"
+          },
+          "authentication": {
+            "properties": {
+              "credentialType": {
+                "type": "keyword"
+              },
+              "credentialId": {
+                "type": "keyword"
+              }
+            }
+          }
+        }
+      },
+      "agent": {
+        "properties": {
+          "id": {
+            "type": "keyword"
+          },
+          "name": {
+            "type": "keyword"
+          },
+          "systemPrompt": {
+            "type": "text"
+          }
+        }
+      },
+      "ipAddresses": {
+        "properties": {
+          "ipAddress": {
+            "type": "ip"
+          },
+          "eventIds": {
+            "type": "keyword"
+          },
+          "geoContext": {
+            "properties": {
+              "country": {
+                "type": "keyword"
+              },
+              "city": {
+                "type": "keyword"
+              },
+              "state": {
+                "type": "keyword"
+              },
+              "postal": {
+                "type": "keyword"
+              },
+              "asn": {
+                "type": "long"
+              },
+              "asOrg": {
+                "type": "keyword"
+              }
+            }
+          }
+        }
+      },
+      "userAgents": {
+        "properties": {
+          "userAgent": {
+            "fields": {
+              "keyword": {
+                "type": "keyword"
+              }
+            },
+            "type": "text"
+          },
+          "eventIds": {
+            "type": "keyword"
+          },
+          "userAgentAnalysis": {
+            "properties": {
+              "family": {
+                "type": "keyword"
+              },
+              "wildcard": {
+                "type": "keyword"
+              },
+              "wildcardNormalized": {
+                "type": "keyword"
+              },
+              "prefix": {
+                "type": "keyword"
+              },
+              "browser": {
+                "type": "object"
+              },
+              "device": {
+                "type": "object"
+              },
+              "engine": {
+                "type": "object"
+              },
+              "os": {
+                "type": "object"
+              },
+              "cpu": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      },
+      "infrastructure": {
+        "properties": {
+          "cloud": {
+            "type": "keyword"
+          },
+          "region": {
+            "type": "keyword"
+          },
+          "computeType": {
+            "type": "keyword"
+          },
+          "computeId": {
+            "type": "keyword"
+          },
+          "eventIds": {
+            "type": "keyword"
+          },
+          "aws": {
+            "properties": {
+              "resourceType": {
+                "type": "keyword"
+              },
+              "accountId": {
+                "type": "keyword"
+              },
+              "roleArn": {
+                "type": "keyword"
+              },
+              "functionName": {
+                "type": "keyword"
+              },
+              "executionRole": {
+                "type": "keyword"
+              }
+            }
+          },
+          "gcp": {
+            "properties": {
+              "resourceType": {
+                "type": "keyword"
+              },
+              "projectId": {
+                "type": "keyword"
+              },
+              "serviceAccount": {
+                "type": "keyword"
+              },
+              "functionName": {
+                "type": "keyword"
+              }
+            }
+          },
+          "azure": {
+            "properties": {
+              "resourceType": {
+                "type": "keyword"
+              },
+              "subscriptionId": {
+                "type": "keyword"
+              },
+              "resourceGroup": {
+                "type": "keyword"
+              },
+              "managedIdentity": {
+                "type": "keyword"
+              },
+              "functionName": {
+                "type": "keyword"
+              }
+            }
+          }
+        }
+      },
+      "models": {
+        "properties": {
+          "provider": {
+            "type": "keyword"
+          },
+          "providerApi": {
+            "type": "keyword"
+          },
+          "model": {
+            "type": "keyword"
+          },
+          "eventIds": {
+            "type": "keyword"
+          }
+        }
+      },
+      "behaviorAnomalyData": {
+        "type": "object",
+        "enabled": false
+      }
+    }
+  },
+  "settings": {
+    "index": {
+      "mapping": {
+        "total_fields": {
+          "limit": 50000
+        }
+      }
+    }
+  }
+}

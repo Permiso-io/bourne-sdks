@@ -1,0 +1,152 @@
+{
+  "mappings": {
+    "dynamic_templates": [
+      {
+        "strings": {
+          "mapping": {
+            "type": "keyword"
+          },
+          "match_mapping_type": "string"
+        }
+      }
+    ],
+    "properties": {
+      "@timestamp": {
+        "type": "date"
+      },
+      "tenantId": {
+        "type": "keyword"
+      },
+      "runId": {
+        "type": "keyword"
+      },
+      "sessionId": {
+        "type": "keyword"
+      },
+      "eventId": {
+        "type": "keyword"
+      },
+      "eventOrderId": {
+        "type": "keyword"
+      },
+      "s3RawKey": {
+        "type": "keyword"
+      },
+      "timestamp": {
+        "type": "date",
+        "format": "strict_date_optional_time||epoch_millis"
+      },
+      "source": {
+        "type": "keyword"
+      },
+      "type": {
+        "type": "keyword"
+      },
+      "text": {
+        "type": "text"
+      },
+      "thinking": {
+        "type": "text"
+      },
+      "signature": {
+        "type": "keyword"
+      },
+      "thinkingBudget": {
+        "type": "long"
+      },
+      "name": {
+        "type": "keyword"
+      },
+      "toolUseId": {
+        "type": "keyword"
+      },
+      "input": {
+        "type": "object",
+        "enabled": false
+      },
+      "content": {
+        "type": "text"
+      },
+      "isError": {
+        "type": "boolean"
+      },
+      "image": {
+        "type": "object",
+        "enabled": false
+      },
+      "document": {
+        "type": "object",
+        "enabled": false
+      },
+      "model": {
+        "type": "keyword"
+      },
+      "temperature": {
+        "type": "float"
+      },
+      "maxTokens": {
+        "type": "long"
+      },
+      "topP": {
+        "type": "float"
+      },
+      "topK": {
+        "type": "long"
+      },
+      "stopReason": {
+        "type": "keyword"
+      },
+      "usage": {
+        "properties": {
+          "inputTokens": {
+            "type": "long"
+          },
+          "outputTokens": {
+            "type": "long"
+          },
+          "totalTokens": {
+            "type": "long"
+          },
+          "cacheReadTokens": {
+            "type": "long"
+          },
+          "cacheWriteTokens": {
+            "type": "long"
+          },
+          "cost": {
+            "properties": {
+              "inputTokensCost": {
+                "type": "float"
+              },
+              "outputTokensCost": {
+                "type": "float"
+              },
+              "cacheReadTokensCost": {
+                "type": "float"
+              },
+              "cacheWriteTokensCost": {
+                "type": "float"
+              },
+              "currency": {
+                "type": "keyword"
+              }
+            }
+          }
+        }
+      },
+      "eventClassification": {
+        "type": "object",
+        "enabled": false
+      }
+    }
+  },
+  "settings": {
+    "index": {
+      "mapping": {
+        "total_fields": {
+          "limit": 50000
+        }
+      }
+    }
+  }
+}
