@@ -12,6 +12,7 @@ from permiso_custom_hooks import (
     PermisoAgentContext,
     PermisoCustomHooksClient,
     PermisoCustomHooksConfig,
+    PermisoUser,
 )
 from permiso_custom_hooks.exceptions import PermisoCustomHooksError
 
@@ -257,3 +258,150 @@ def test_set_agent_updates_subsequent_requests(config: PermisoCustomHooksConfig)
 
     second = json.loads(mock_urlopen.call_args_list[1][0][0].data.decode("utf-8"))
     assert second["agent"] == {"name": "Sub", "id": "sub-9"}
+
+
+def test_session_id_from_config_and_set_session_id(
+    config: PermisoCustomHooksConfig,
+) -> None:
+    cfg = PermisoCustomHooksConfig(
+        api_key=config.api_key, base_url=config.base_url, session_id="session-a"
+    )
+    with patch("urllib.request.urlopen", return_value=_ok_response()) as mock_urlopen:
+        client = PermisoCustomHooksClient(cfg)
+        client.send_event("e1")
+        client.set_session_id("session-b")
+        client.send_event("e2")
+        client.set_session_id(None)
+        client.send_event("e3")
+
+    b1, b2, b3 = (
+        json.loads(mock_urlopen.call_args_list[i][0][0].data.decode("utf-8"))
+        for i in range(3)
+    )
+    assert b1["sessionId"] == "session-a"
+    assert b2["sessionId"] == "session-b"
+    assert "sessionId" not in b3
+
+
+def test_user_config_and_set_user_merge(config: PermisoCustomHooksConfig) -> None:
+    cfg = PermisoCustomHooksConfig(
+        api_key=config.api_key,
+        base_url=config.base_url,
+        user=PermisoUser(email="a@x.com", id="u-1", name="Ann"),
+    )
+    with patch("urllib.request.urlopen", return_value=_ok_response()) as mock_urlopen:
+        client = PermisoCustomHooksClient(cfg)
+        client.send_event("e1")
+        client.set_user(PermisoUser(name="Bea", id="u-2"))  # merge: email from before
+        client.send_event("e2")
+
+    b1 = json.loads(mock_urlopen.call_args_list[0][0][0].data.decode("utf-8"))
+    b2 = json.loads(mock_urlopen.call_args_list[1][0][0].data.decode("utf-8"))
+    assert b1["user"] == {"email": "a@x.com", "id": "u-1", "name": "Ann"}
+    assert b2["user"] == {"email": "a@x.com", "id": "u-2", "name": "Bea"}
+
+
+def test_set_system_prompt_none_clears_agent_key(config: PermisoCustomHooksConfig) -> None:
+    cfg = PermisoCustomHooksConfig(
+        api_key=config.api_key, base_url=config.base_url, system_prompt="before"
+    )
+    with patch("urllib.request.urlopen", return_value=_ok_response()) as mock_urlopen:
+        client = PermisoCustomHooksClient(cfg)
+        client.send_event("e1")
+        client.set_system_prompt(None)
+        client.send_event("e2", {"source": "user", "type": "text", "text": "x"})
+
+    b2 = json.loads(mock_urlopen.call_args_list[1][0][0].data.decode("utf-8"))
+    assert "agent" not in b2
+
+
+def test_end_run_custom_stop_reason(config: PermisoCustomHooksConfig) -> None:
+    with patch("urllib.request.urlopen", return_value=_ok_response()) as mock_urlopen:
+        client = PermisoCustomHooksClient(config)
+        client.end_run(stop_reason="max_tokens")
+
+    body = json.loads(mock_urlopen.call_args[0][0].data.decode("utf-8"))
+    assert body["event"] == {"source": "stop", "stopReason": "max_tokens"}
+
+
+def test_child_client_parent_run_id_matches_parent(
+    config: PermisoCustomHooksConfig,
+) -> None:
+    with patch("urllib.request.urlopen", return_value=_ok_response()) as mock_urlopen:
+        parent = PermisoCustomHooksClient(config)
+        parent_id = parent.get_run_id()
+        child = PermisoCustomHooksClient(
+            PermisoCustomHooksConfig(
+                api_key=config.api_key,
+                base_url=config.base_url,
+                parent_run_id=parent_id,
+                agent=PermisoAgentContext(name="Critic", id="c-1"),
+            )
+        )
+        child.send_event("critic_prompt", {"x": 1})
+        c_run = child.get_run_id()
+        child.send_event("critic_reply")
+
+    c1 = json.loads(mock_urlopen.call_args_list[0][0][0].data.decode("utf-8"))
+    c2 = json.loads(mock_urlopen.call_args_list[1][0][0].data.decode("utf-8"))
+    assert c1["parentRunId"] == parent_id
+    assert c1["runId"] == c2["runId"] == c_run
+    assert c1["runId"] != parent_id
+    assert c1["agent"] == {"name": "Critic", "id": "c-1"}
+
+
+def test_send_event_fails_serialization_with_raise(
+    config: PermisoCustomHooksConfig,
+) -> None:
+    cfg = PermisoCustomHooksConfig(
+        api_key=config.api_key, base_url=config.base_url, raise_on_error=True
+    )
+    with patch("urllib.request.urlopen") as mock_urlopen:
+        client = PermisoCustomHooksClient(cfg)
+        with pytest.raises(PermisoCustomHooksError) as exc_info:
+            client.send_event("e", {"bad": object()})
+    assert mock_urlopen.call_count == 0
+    assert "serialize" in (exc_info.value.message or "")
+
+
+def test_2xx_empty_response_body_succeeds(config: PermisoCustomHooksConfig) -> None:
+    resp = MagicMock()
+    resp.status = 200
+    resp.read.return_value = b""
+    resp.__enter__ = MagicMock(return_value=resp)
+    resp.__exit__ = MagicMock(return_value=False)
+    with patch("urllib.request.urlopen", return_value=resp) as mock_urlopen:
+        client = PermisoCustomHooksClient(config)
+        assert client.send_event("ok") == {}
+    assert mock_urlopen.call_count == 1
+
+
+def test_2xx_invalid_json_response_raises(config: PermisoCustomHooksConfig) -> None:
+    resp = MagicMock()
+    resp.status = 200
+    resp.read.return_value = b"not json"
+    resp.__enter__ = MagicMock(return_value=resp)
+    resp.__exit__ = MagicMock(return_value=False)
+    with patch("urllib.request.urlopen", return_value=resp):
+        client = PermisoCustomHooksClient(
+            PermisoCustomHooksConfig(
+                api_key=config.api_key, base_url=config.base_url, raise_on_error=True
+            )
+        )
+        with pytest.raises(PermisoCustomHooksError) as exc_info:
+            client.send_event("e")
+    assert "Invalid JSON" in (exc_info.value.message or "")
+    assert exc_info.value.status == 200
+
+
+def test_2xx_invalid_json_response_returns_empty_when_no_raise(
+    config: PermisoCustomHooksConfig,
+) -> None:
+    resp = MagicMock()
+    resp.status = 200
+    resp.read.return_value = b"not json"
+    resp.__enter__ = MagicMock(return_value=resp)
+    resp.__exit__ = MagicMock(return_value=False)
+    with patch("urllib.request.urlopen", return_value=resp):
+        client = PermisoCustomHooksClient(config)
+        assert client.send_event("e") == {}
