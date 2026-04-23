@@ -11,13 +11,20 @@ import type {
  * Error thrown when the Custom Hooks API returns a non-2xx or the request fails.
  */
 export class PermisoCustomHooksError extends Error {
+  /** Present when the failure was chained from an underlying error (e.g. `fetch` rejection). */
+  declare cause?: unknown;
+
   constructor(
     message: string,
     public readonly status?: number,
     public readonly body?: string,
+    cause?: unknown,
   ) {
     super(message);
     this.name = "PermisoCustomHooksError";
+    if (cause !== undefined) {
+      (this as Error & { cause?: unknown }).cause = cause;
+    }
     Object.setPrototypeOf(this, PermisoCustomHooksError.prototype);
   }
 }
@@ -47,6 +54,7 @@ export class PermisoCustomHooksClient {
   private readonly baseUrl: string;
   private readonly apiKey: string;
   private readonly parentRunId?: string;
+  private readonly raiseOnError: boolean;
   private runId: string;
   private agent: PermisoAgentContext;
   private sessionId?: string;
@@ -57,6 +65,7 @@ export class PermisoCustomHooksClient {
     this.baseUrl = base;
     this.apiKey = config.apiKey;
     this.parentRunId = config.parentRunId;
+    this.raiseOnError = config.raiseOnError ?? false;
     this.runId = randomUUID();
     this.agent = initialAgentState(config);
     this.sessionId = config.sessionId;
@@ -113,75 +122,121 @@ export class PermisoCustomHooksClient {
    *
    * @param eventName - Hook event name (e.g. "session_start", "my_custom_event"). Sent as hookEvent.
    * @param data - Optional event payload fields. Sent as the `event` object on the request body.
-   * @returns The API response.
-   * @throws PermisoCustomHooksError on non-2xx or network failure.
+   * @returns The API response, or `{}` when `raiseOnError` is `false` and the request fails.
+   * @throws PermisoCustomHooksError when `raiseOnError` is `true` and the request fails (non-2xx, invalid JSON, or transport error).
    */
   async sendEvent(
     eventName: string,
     data?: Record<string, unknown>,
   ): Promise<CustomHooksResponse> {
-    const body: Record<string, unknown> = {
-      hookEvent: eventName,
-      runId: this.runId,
-      event: { ...(data ?? {}) },
-      bourneVersion: BOURNE_VERSION,
-    };
-    if (this.parentRunId !== undefined) {
-      body.parentRunId = this.parentRunId;
-    }
-    if (this.sessionId !== undefined) {
-      body.sessionId = this.sessionId;
-    }
-    if (this.user && this.hasUserField(this.user)) {
-      body.user = { ...this.user };
-    }
-    const agentPayload = this.buildAgentPayload();
-    if (agentPayload) {
-      body.agent = agentPayload;
-    }
-
-    const url = `${this.baseUrl}/hooks`;
-    const response = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": this.apiKey,
-        "X-Hook-Source": HOOK_SOURCE_HEADER,
-      },
-      body: JSON.stringify(body),
-    });
-
-    const rawBody = await response.text();
-    if (!response.ok) {
-      throw new PermisoCustomHooksError(
-        `API error: ${response.status} ${response.statusText}`,
-        response.status,
-        rawBody,
-      );
-    }
-
-    let parsed: CustomHooksResponse;
     try {
-      parsed = rawBody ? (JSON.parse(rawBody) as CustomHooksResponse) : {};
-    } catch {
-      throw new PermisoCustomHooksError(
-        "Invalid JSON response from Custom Hooks API",
-        response.status,
-        rawBody,
-      );
+      return await this.dispatchHookEvent(eventName, data);
+    } catch (e) {
+      if (this.raiseOnError) {
+        throw e;
+      }
+      return {};
     }
-
-    return parsed;
   }
 
   /**
    * Sends a "stop" event for the current run, then rotates to a fresh runId so any
    * subsequent calls to `sendEvent` start a new run.
+   *
+   * @returns Parsed API response, or `{}` when `raiseOnError` is `false` and the stop request fails (in that case `runId` is not rotated).
+   * @throws PermisoCustomHooksError when `raiseOnError` is `true` and the stop request fails.
    */
   async endRun(stopReason = "end_turn"): Promise<CustomHooksResponse> {
-    const response = await this.sendEvent("stop", { source: "stop", stopReason });
-    this.runId = randomUUID();
-    return response;
+    try {
+      const response = await this.dispatchHookEvent("stop", { source: "stop", stopReason });
+      this.runId = randomUUID();
+      return response;
+    } catch (e) {
+      if (this.raiseOnError) {
+        throw e;
+      }
+      return {};
+    }
+  }
+
+  private async dispatchHookEvent(
+    eventName: string,
+    data?: Record<string, unknown>,
+  ): Promise<CustomHooksResponse> {
+    try {
+      const body: Record<string, unknown> = {
+        hookEvent: eventName,
+        runId: this.runId,
+        event: { ...(data ?? {}) },
+        bourneVersion: BOURNE_VERSION,
+      };
+      if (this.parentRunId !== undefined) {
+        body.parentRunId = this.parentRunId;
+      }
+      if (this.sessionId !== undefined) {
+        body.sessionId = this.sessionId;
+      }
+      if (this.user && this.hasUserField(this.user)) {
+        body.user = { ...this.user };
+      }
+      const agentPayload = this.buildAgentPayload();
+      if (agentPayload) {
+        body.agent = agentPayload;
+      }
+
+      const url = `${this.baseUrl}/hooks`;
+      let response: Response;
+      try {
+        response = await fetch(url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-api-key": this.apiKey,
+            "X-Hook-Source": HOOK_SOURCE_HEADER,
+          },
+          body: JSON.stringify(body),
+        });
+      } catch (e) {
+        throw new PermisoCustomHooksError(
+          e instanceof Error ? e.message : "Custom Hooks request failed",
+          undefined,
+          undefined,
+          e instanceof Error ? e : undefined,
+        );
+      }
+
+      const rawBody = await response.text();
+      if (!response.ok) {
+        throw new PermisoCustomHooksError(
+          `API error: ${response.status} ${response.statusText}`,
+          response.status,
+          rawBody,
+        );
+      }
+
+      let parsed: CustomHooksResponse;
+      try {
+        parsed = rawBody ? (JSON.parse(rawBody) as CustomHooksResponse) : {};
+      } catch {
+        throw new PermisoCustomHooksError(
+          "Invalid JSON response from Custom Hooks API",
+          response.status,
+          rawBody,
+        );
+      }
+
+      return parsed;
+    } catch (e) {
+      if (e instanceof PermisoCustomHooksError) {
+        throw e;
+      }
+      throw new PermisoCustomHooksError(
+        e instanceof Error ? e.message : "Custom Hooks request failed",
+        undefined,
+        undefined,
+        e instanceof Error ? e : undefined,
+      );
+    }
   }
 
   private buildAgentPayload(): PermisoAgentContext | undefined {

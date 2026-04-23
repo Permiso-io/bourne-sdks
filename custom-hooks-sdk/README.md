@@ -172,6 +172,7 @@ Do not send properties that are not listed for a variant if your integration is 
 | `systemPrompt` | *(Optional.)* System prompt at the top level of config. After `agent` is applied, sets or overrides `agent.systemPrompt` for requests. |
 | `sessionId` | *(Optional.)* Session identifier. When set, it is attached as a top-level `sessionId` field on every request. |
 | `user` | *(Optional.)* End-user metadata (`{ email?, id?, name? }`) attached as a top-level `user` object on every request. |
+| `raiseOnError` | *(Optional.)* Defaults to `false`. When `false`, `sendEvent` and `endRun` never throw for HTTP errors, invalid JSON, or transport failures; they return `{}` instead. When `true`, failures throw `PermisoCustomHooksError`. If `endRun` fails while `raiseOnError` is `false`, the current `runId` is left unchanged (no rotation). |
 
 `systemPrompt`, `sessionId`, `user`, and agent fields can be updated after construction via `setSystemPrompt`, `setAgent`, `setSessionId`, and `setUser`.
 
@@ -179,7 +180,7 @@ Do not send properties that are not listed for a variant if your integration is 
 
 1. **Construction** — A `runId` (UUID) is generated in the constructor. Access it via `getRunId()`.
 2. **Sending events** — Every call to `sendEvent(...)` includes the current `runId` at the top level of the body, so all events are tied to the same run.
-3. **Ending a run** — Call `endRun()` to send a `stop` event for the current run. After the request completes, the client rotates to a new `runId`, so any subsequent `sendEvent` calls start a fresh run.
+3. **Ending a run** — Call `endRun()` to send a `stop` event for the current run. After the request **succeeds**, the client rotates to a new `runId`, so any subsequent `sendEvent` calls start a fresh run. If the stop request fails and `raiseOnError` is `false` (the default), `endRun` returns `{}` and keeps the same `runId`.
 
 Run state is kept in memory only. If your process restarts, a new `runId` is generated automatically when the next client is constructed.
 
@@ -187,9 +188,9 @@ Run state is kept in memory only. If your process restarts, a new `runId` is gen
 
 ### `PermisoCustomHooksClient`
 
-- **`constructor(config: PermisoCustomHooksConfig)`** — Creates a client with `apiKey` and optional `baseUrl` (defaults to `https://alb.permiso.io`). Also accepts optional `parentRunId`, `agent`, `systemPrompt`, `sessionId`, and `user`. Generates an initial `runId`.
-- **`sendEvent(eventName: string, data?: Record<string, unknown>): Promise<CustomHooksResponse>`** — Sends a hook event. Posts `{ hookEvent: eventName, runId, event: data ?? {}, bourneVersion: "v2" }` to `{baseUrl}/hooks`, with top-level `parentRunId`, `sessionId`, `user`, and `agent` included when configured. Returns the API response.
-- **`endRun(stopReason?: string): Promise<CustomHooksResponse>`** — Sends a `stop` hook with `event` `{ source: "stop", stopReason }` (default `stopReason`: `"end_turn"`), then rotates to a new `runId` for subsequent calls.
+- **`constructor(config: PermisoCustomHooksConfig)`** — Creates a client with `apiKey` and optional `baseUrl` (defaults to `https://alb.permiso.io`). Also accepts optional `parentRunId`, `agent`, `systemPrompt`, `sessionId`, `user`, and `raiseOnError`. Generates an initial `runId`.
+- **`sendEvent(eventName: string, data?: Record<string, unknown>): Promise<CustomHooksResponse>`** — Sends a hook event. Posts `{ hookEvent: eventName, runId, event: data ?? {}, bourneVersion: "v2" }` to `{baseUrl}/hooks`, with top-level `parentRunId`, `sessionId`, `user`, and `agent` included when configured. Returns the API response on success. When `raiseOnError` is `false` (default), failures return `{}` instead of throwing.
+- **`endRun(stopReason?: string): Promise<CustomHooksResponse>`** — Sends a `stop` hook with `event` `{ source: "stop", stopReason }` (default `stopReason`: `"end_turn"`), then rotates to a new `runId` after a **successful** request. When `raiseOnError` is `false`, a failed stop returns `{}` and does not rotate `runId`.
 - **`getRunId(): string`** — Returns the current run ID (useful for logging, debugging, correlating client-side logs with dashboard entries, or passing as `parentRunId` for a child client).
 - **`setSystemPrompt(prompt: string | undefined): void`** — Sets (or clears) the system prompt included in the top-level `agent` object on every subsequent request.
 - **`setAgent(agent: Partial<PermisoAgentContext>): void`** — Merges partial agent metadata (`systemPrompt`, `name`, `id`) into the client's agent state for subsequent requests.
@@ -208,7 +209,7 @@ Thrown when the API returns a non-2xx or the request fails. Properties:
 - `status` — HTTP status code (if available).
 - `body` — Response body (if available).
 
-On error, the client does not rotate its `runId`, so you can retry the same run.
+On error, the client does not rotate its `runId`, so you can retry the same run. This applies when `raiseOnError` is `true` (errors surface to your code). When `raiseOnError` is `false`, `sendEvent` returns `{}` on failure and likewise does not rotate `runId` except after a successful `endRun`.
 
 ## Publishing
 

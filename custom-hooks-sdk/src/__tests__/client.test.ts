@@ -166,7 +166,7 @@ describe("PermisoCustomHooksClient", () => {
       });
     });
 
-    it("throws PermisoCustomHooksError on non-2xx", async () => {
+    it("returns {} on non-2xx when raiseOnError is false (default)", async () => {
       mockFetch.mockResolvedValueOnce({
         ok: false,
         status: 401,
@@ -175,6 +175,21 @@ describe("PermisoCustomHooksClient", () => {
       });
 
       const client = new PermisoCustomHooksClient({ baseUrl, apiKey });
+      const result = await client.sendEvent("event");
+
+      expect(result).toEqual({});
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+
+    it("throws PermisoCustomHooksError on non-2xx when raiseOnError is true", async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 401,
+        statusText: "Unauthorized",
+        text: () => Promise.resolve(JSON.stringify({ error: "Invalid API key" })),
+      });
+
+      const client = new PermisoCustomHooksClient({ baseUrl, apiKey, raiseOnError: true });
       const promise = client.sendEvent("event");
       await expect(promise).rejects.toThrow(PermisoCustomHooksError);
       const err = (await promise.catch((e: unknown) => e)) as PermisoCustomHooksError;
@@ -182,6 +197,22 @@ describe("PermisoCustomHooksClient", () => {
         status: 401,
         body: expect.stringContaining("Invalid API key"),
       });
+    });
+
+    it("returns {} when fetch rejects and raiseOnError is false", async () => {
+      mockFetch.mockRejectedValueOnce(new Error("network down"));
+
+      const client = new PermisoCustomHooksClient({ baseUrl, apiKey });
+      const result = await client.sendEvent("event");
+
+      expect(result).toEqual({});
+    });
+
+    it("throws PermisoCustomHooksError when fetch rejects and raiseOnError is true", async () => {
+      mockFetch.mockRejectedValueOnce(new Error("network down"));
+
+      const client = new PermisoCustomHooksClient({ baseUrl, apiKey, raiseOnError: true });
+      await expect(client.sendEvent("event")).rejects.toThrow(PermisoCustomHooksError);
     });
   });
 
@@ -198,6 +229,28 @@ describe("PermisoCustomHooksClient", () => {
       const body = JSON.parse(mockFetch.mock.calls[0][1].body as string);
       expect(body.hookEvent).toBe("stop");
       expect(body.event).toMatchObject({ source: "stop", stopReason: "end_turn" });
+    });
+
+    it("does not rotate runId when stop fails and raiseOnError is false", async () => {
+      mockFetch.mockRejectedValueOnce(new Error("network down"));
+
+      const client = new PermisoCustomHooksClient({ baseUrl, apiKey });
+      const before = client.getRunId();
+      const result = await client.endRun();
+      const after = client.getRunId();
+
+      expect(result).toEqual({});
+      expect(before).toBe(after);
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+
+    it("throws and does not rotate runId when stop fails and raiseOnError is true", async () => {
+      mockFetch.mockRejectedValueOnce(new Error("network down"));
+
+      const client = new PermisoCustomHooksClient({ baseUrl, apiKey, raiseOnError: true });
+      const before = client.getRunId();
+      await expect(client.endRun()).rejects.toThrow(PermisoCustomHooksError);
+      expect(client.getRunId()).toBe(before);
     });
   });
 });

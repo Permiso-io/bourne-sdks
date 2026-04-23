@@ -53,6 +53,12 @@ export interface PermisoCustomHooksConfig {
     sessionId?: string;
     /** Optional user metadata attached as a top-level `user` object on every request. */
     user?: PermisoUser;
+    /**
+     * When `true`, `sendEvent` and `endRun` throw `PermisoCustomHooksError` on HTTP errors,
+     * invalid JSON, or transport failures. When `false` (the default), those methods return `{}` instead
+     * of throwing; `endRun` does not rotate `runId` if the stop request fails.
+     */
+    raiseOnError?: boolean;
 }
 /**
  * Response shape from the Custom Hooks API.

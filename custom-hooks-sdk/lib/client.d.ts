@@ -5,7 +5,9 @@ import type { PermisoAgentContext, PermisoCustomHooksConfig, CustomHooksResponse
 export declare class PermisoCustomHooksError extends Error {
     readonly status?: number | undefined;
     readonly body?: string | undefined;
-    constructor(message: string, status?: number | undefined, body?: string | undefined);
+    /** Present when the failure was chained from an underlying error (e.g. `fetch` rejection). */
+    cause?: unknown;
+    constructor(message: string, status?: number | undefined, body?: string | undefined, cause?: unknown);
 }
 /**
  * Client for the Permiso Custom Hooks API.
@@ -17,6 +19,7 @@ export declare class PermisoCustomHooksClient {
     private readonly baseUrl;
     private readonly apiKey;
     private readonly parentRunId?;
+    private readonly raiseOnError;
     private runId;
     private agent;
     private sessionId?;
@@ -57,15 +60,19 @@ export declare class PermisoCustomHooksClient {
      *
      * @param eventName - Hook event name (e.g. "session_start", "my_custom_event"). Sent as hookEvent.
      * @param data - Optional event payload fields. Sent as the `event` object on the request body.
-     * @returns The API response.
-     * @throws PermisoCustomHooksError on non-2xx or network failure.
+     * @returns The API response, or `{}` when `raiseOnError` is `false` and the request fails.
+     * @throws PermisoCustomHooksError when `raiseOnError` is `true` and the request fails (non-2xx, invalid JSON, or transport error).
      */
     sendEvent(eventName: string, data?: Record<string, unknown>): Promise<CustomHooksResponse>;
     /**
      * Sends a "stop" event for the current run, then rotates to a fresh runId so any
      * subsequent calls to `sendEvent` start a new run.
+     *
+     * @returns Parsed API response, or `{}` when `raiseOnError` is `false` and the stop request fails (in that case `runId` is not rotated).
+     * @throws PermisoCustomHooksError when `raiseOnError` is `true` and the stop request fails.
      */
     endRun(stopReason?: string): Promise<CustomHooksResponse>;
+    private dispatchHookEvent;
     private buildAgentPayload;
     private hasAgentField;
     private hasUserField;
