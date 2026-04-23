@@ -21,6 +21,7 @@ import importlib.util
 import os
 import sys
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
@@ -197,33 +198,24 @@ pytestmark = [
 ]
 
 
-@pytest.fixture
-def e2e_env() -> None:
-    _load_dotenv()
-
-
-@pytest.fixture
-def opensearch_client(e2e_env: None) -> OpenSearch:
-    c = get_mach5_os_client()
-    try:
-        c.cluster.health(
-            request_timeout=10,
-            wait_for_status="yellow",
-        )
-    except Exception as e:
-        _e2e_dprint(f"[test_e2e_mach5] skipping test: OpenSearch not reachable: {e!r}")
-        pytest.skip(f"OpenSearch not reachable (Mach5 tunnel on localhost?): {e!r}")
-    return c
-
-
-def test_custom_hooks_appear_in_agent_runs_and_event_indices(
-    opensearch_client: OpenSearch,
-    e2e_env: None,
-) -> None:
+@dataclass(frozen=True)
+class E2EIndexedRun:
     """
-    Pushes a run with a unique session, user, and agent, then checks Mach5 for one run doc
-    and at least two event docs (user + stop) tied to the same ``runId``.
+    One Custom Hooks run after Mach5 has indexed the run and events (``agent_runs_v2`` / events).
     """
+
+    run_id: str
+    session_id: str
+    text_marker: str
+    rdocs: list[dict]
+    edocs: list[dict]
+
+    @property
+    def run_src(self) -> dict:
+        return self.rdocs[0]
+
+
+def _index_one_custom_hooks_run(opensearch: OpenSearch) -> E2EIndexedRun:
     text_marker = _text_markers()
     session_id = f"e2e-sess-{uuid.uuid4().hex[:18]}"
 
@@ -259,8 +251,8 @@ def test_custom_hooks_appear_in_agent_runs_and_event_indices(
     interval = _e2e_interval_s()
 
     def _indexed() -> tuple[list[dict], list[dict]] | None:
-        rdocs = search_runs_by_run_id(opensearch_client, run_id)
-        edocs = search_events_by_run_id(opensearch_client, run_id)
+        rdocs = search_runs_by_run_id(opensearch, run_id)
+        edocs = search_events_by_run_id(opensearch, run_id)
         if len(rdocs) >= 1 and len(edocs) >= 2:
             return (rdocs, edocs)
         return None
@@ -271,48 +263,127 @@ def test_custom_hooks_appear_in_agent_runs_and_event_indices(
         interval_s=interval,
     )
     assert len(rdocs) == 1, f"expected a single run doc for {run_id}, got {len(rdocs)}"
-    run_src = rdocs[0]
+    return E2EIndexedRun(
+        run_id=run_id,
+        session_id=session_id,
+        text_marker=text_marker,
+        rdocs=rdocs,
+        edocs=edocs,
+    )
 
-    # --- agent_runs_v2
-    assert run_src.get("runId") == run_id
-    assert run_src.get("sessionId") == session_id
+
+@pytest.fixture(scope="module")
+def e2e_indexed_run() -> E2EIndexedRun:
+    """
+    One live run + wait for Mach5, shared by all e2e tests in this module (avoids N API round-trips).
+    """
+    _load_dotenv()
+    c = get_mach5_os_client()
+    try:
+        c.cluster.health(
+            request_timeout=10,
+            wait_for_status="yellow",
+        )
+    except Exception as e:
+        _e2e_dprint(f"[test_e2e_mach5] skipping test: OpenSearch not reachable: {e!r}")
+        pytest.skip(f"OpenSearch not reachable (Mach5 tunnel on localhost?): {e!r}")
+    return _index_one_custom_hooks_run(c)
+
+
+def test_e2e_run_run_id_in_index(
+    e2e_indexed_run: E2EIndexedRun,
+) -> None:
+    assert e2e_indexed_run.run_src.get("runId") == e2e_indexed_run.run_id
+
+
+def test_e2e_run_session_id_in_index(
+    e2e_indexed_run: E2EIndexedRun,
+) -> None:
+    assert e2e_indexed_run.run_src.get("sessionId") == e2e_indexed_run.session_id
+
+
+def test_e2e_run_event_types_includes_text(
+    e2e_indexed_run: E2EIndexedRun,
+) -> None:
     # eventTypes is derived from the normalized event (e.g. message ``type: "text"``), not
     # Custom Hooks ``hookEvent`` (e.g. "user_prompt").
-    ev_types = set(run_src.get("eventTypes") or [])
+    ev_types = set(e2e_indexed_run.run_src.get("eventTypes") or [])
     assert "text" in ev_types, f"eventTypes: {ev_types!r} (user message variant)"
+
+
+def test_e2e_run_event_types_includes_stop(
+    e2e_indexed_run: E2EIndexedRun,
+) -> None:
+    ev_types = set(e2e_indexed_run.run_src.get("eventTypes") or [])
     assert "stop" in ev_types, f"eventTypes: {ev_types!r}"
 
+
+def test_e2e_run_user_in_index(
+    e2e_indexed_run: E2EIndexedRun,
+) -> None:
+    run_src = e2e_indexed_run.run_src
     user_src = (run_src.get("user") or {}) if isinstance(run_src.get("user"), dict) else {}
-    if user_src:
-        # If this fails with id "" or wrong value, the hooks API accepted ``user`` but the run
-        # index did not preserve it—treat as a server/pipeline bug, not a test quirk.
-        assert user_src.get("id") == "e2e-user-1", f"user in index: {user_src!r}"
-        assert (user_src.get("name") or "") == "E2E User", f"user in index: {user_src!r}"
+    if not user_src:
+        return
+    # If this fails with id "" or wrong value, the hooks API accepted ``user`` but the run
+    # index did not preserve it—treat as a server/pipeline bug, not a test quirk.
+    assert user_src.get("id") == "e2e-user-1", f"user in index: {user_src!r}"
+    assert (user_src.get("name") or "") == "E2E User", f"user in index: {user_src!r}"
+
+
+def test_e2e_run_agent_in_index(
+    e2e_indexed_run: E2EIndexedRun,
+) -> None:
+    run_src = e2e_indexed_run.run_src
     agent_src = (run_src.get("agent") or {}) if isinstance(run_src.get("agent"), dict) else {}
-    if agent_src:
-        assert (
-            agent_src.get("id") == "e2e-mach5-agent-1"
-            or agent_src.get("name") == "E2EMach5Agent"
-        )
+    if not agent_src:
+        return
+    assert (
+        agent_src.get("id") == "e2e-mach5-agent-1" or agent_src.get("name") == "E2EMach5Agent"
+    )
 
-    # --- agent_run_events_v2
-    for d in edocs:
-        assert d.get("runId") == run_id, d
+
+def test_e2e_event_docs_tied_to_run(
+    e2e_indexed_run: E2EIndexedRun,
+) -> None:
+    for d in e2e_indexed_run.edocs:
+        assert d.get("runId") == e2e_indexed_run.run_id, d
+
+
+def test_e2e_event_docs_session_id_when_present(
+    e2e_indexed_run: E2EIndexedRun,
+) -> None:
+    sid = e2e_indexed_run.session_id
+    for d in e2e_indexed_run.edocs:
         if d.get("sessionId") is not None:
-            assert d.get("sessionId") == session_id, d
+            assert d.get("sessionId") == sid, d
 
+
+def test_e2e_event_docs_include_user_marker(
+    e2e_indexed_run: E2EIndexedRun,
+) -> None:
+    m = e2e_indexed_run.text_marker
+    edocs = e2e_indexed_run.edocs
     texts: list[str] = []
-    stop_hits = 0
     user_text_hit = 0
     for d in edocs:
-        if d.get("source") == "stop" and d.get("stopReason") == "end_turn":
-            stop_hits += 1
         t = d.get("text")
-        if isinstance(t, str) and text_marker in t:
+        if isinstance(t, str) and m in t:
             user_text_hit += 1
         if isinstance(t, str):
             texts.append(t)
-    assert user_text_hit >= 1 or any(
-        text_marker in t for t in texts
-    ), "expected an event with user text including the marker"
+    assert user_text_hit >= 1 or any(m in t for t in texts), (
+        "expected an event with user text including the marker"
+    )
+
+
+def test_e2e_event_docs_include_stop_end_turn(
+    e2e_indexed_run: E2EIndexedRun,
+) -> None:
+    edocs = e2e_indexed_run.edocs
+    stop_hits = sum(
+        1
+        for d in edocs
+        if d.get("source") == "stop" and d.get("stopReason") == "end_turn"
+    )
     assert stop_hits >= 1, f"expected a stop event with end_turn; had {edocs!r}"
