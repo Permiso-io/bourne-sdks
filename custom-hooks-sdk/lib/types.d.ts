@@ -11,6 +11,18 @@ export interface PermisoUser {
     name?: string;
 }
 /**
+ * Agent metadata attached to each request when any field is set, via `agent` / `setAgent` /
+ * `setSystemPrompt` or the top-level `systemPrompt` config option.
+ */
+export interface PermisoAgentContext {
+    /** System instructions for the agent. */
+    systemPrompt?: string;
+    /** Display or logical name of the agent. */
+    name?: string;
+    /** Custom stable identifier for this agent (distinct from end-user `user.id`). */
+    id?: string;
+}
+/**
  * Configuration for the Permiso Custom Hooks client.
  */
 export interface PermisoCustomHooksConfig {
@@ -22,8 +34,19 @@ export interface PermisoCustomHooksConfig {
     /** API key (secret) for authentication. Use the secret from your Permiso agent (A2M Keys). */
     apiKey: string;
     /**
-     * Optional system prompt. When set, the SDK emits a dedicated `system_prompt` event
-     * before the first event of each run (including after `endRun` rotates the runId).
+     * Optional parent run ID. When set (e.g. for a sub-agent), it is sent at the top level
+     * on every request next to `runId` so the backend can link child runs to a parent run.
+     */
+    parentRunId?: string;
+    /**
+     * Optional initial agent metadata (`systemPrompt`, `name`, `id`). Sent as a top-level
+     * `agent` object on every request when at least one field is set. Merged with top-level
+     * `systemPrompt` when that option is provided (see `systemPrompt`).
+     */
+    agent?: PermisoAgentContext;
+    /**
+     * Optional system prompt at the top level of config. Initializes or overrides
+     * `agent.systemPrompt` after `agent` is applied (so existing callers can keep using this field).
      */
     systemPrompt?: string;
     /** Optional session id. When set, it is attached as a top-level `sessionId` on every request. */

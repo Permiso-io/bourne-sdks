@@ -19,6 +19,13 @@ const HOOK_SOURCE_HEADER = "custom";
 const BOURNE_VERSION = "v2";
 /** Production Permiso API base URL (no trailing slash). Used when `baseUrl` is omitted from config. */
 const DEFAULT_CUSTOM_HOOKS_BASE_URL = "https://alb.permiso.io";
+function initialAgentState(config) {
+    const fromAgent = config.agent ? { ...config.agent } : {};
+    return {
+        ...fromAgent,
+        ...(config.systemPrompt !== undefined ? { systemPrompt: config.systemPrompt } : {}),
+    };
+}
 /**
  * Client for the Permiso Custom Hooks API.
  * Manages a run ID automatically: the constructor generates an initial runId that is
@@ -27,12 +34,12 @@ const DEFAULT_CUSTOM_HOOKS_BASE_URL = "https://alb.permiso.io";
  */
 class PermisoCustomHooksClient {
     constructor(config) {
-        this.systemPromptSentForCurrentRun = false;
         const base = (config.baseUrl ?? DEFAULT_CUSTOM_HOOKS_BASE_URL).replace(/\/$/, "");
         this.baseUrl = base;
         this.apiKey = config.apiKey;
+        this.parentRunId = config.parentRunId;
         this.runId = (0, crypto_1.randomUUID)();
-        this.systemPrompt = config.systemPrompt;
+        this.agent = initialAgentState(config);
         this.sessionId = config.sessionId;
         this.user = config.user ? { ...config.user } : undefined;
     }
@@ -43,13 +50,18 @@ class PermisoCustomHooksClient {
         return this.runId;
     }
     /**
-     * Sets (or clears) the system prompt. When set, the SDK emits a dedicated
-     * `system_prompt` event before the first event of each run. If the first event of
-     * the current run has already been sent, the prompt will instead be emitted before
-     * the first event of the next run (after `endRun`).
+     * Sets (or clears) the system prompt used in the top-level `agent` object on every request.
      */
     setSystemPrompt(prompt) {
-        this.systemPrompt = prompt;
+        this.agent = { ...this.agent, systemPrompt: prompt };
+    }
+    /**
+     * Merges partial agent metadata (`systemPrompt`, `name`, `id`) into the client's agent state.
+     * The resulting object is attached as a top-level `agent` on every subsequent request when
+     * at least one field is set.
+     */
+    setAgent(agent) {
+        this.agent = { ...this.agent, ...agent };
     }
     /**
      * Sets (or clears) the session ID. When set, it is attached as a top-level
@@ -72,10 +84,7 @@ class PermisoCustomHooksClient {
      * The request body has the shape `{ hookEvent, runId, event, bourneVersion }`: `hookEvent` is the event
      * name, `runId` is the current run ID at the top level of the body, and `event` is an
      * object containing the optional payload fields from `data`. When configured,
-     * `sessionId` and `user` are also attached at the top level.
-     *
-     * If a system prompt is set and has not yet been emitted for the current run,
-     * a `system_prompt` event is sent first.
+     * `parentRunId`, `sessionId`, `user`, and `agent` are also attached at the top level.
      *
      * @param eventName - Hook event name (e.g. "session_start", "my_custom_event"). Sent as hookEvent.
      * @param data - Optional event payload fields. Sent as the `event` object on the request body.
@@ -83,25 +92,24 @@ class PermisoCustomHooksClient {
      * @throws PermisoCustomHooksError on non-2xx or network failure.
      */
     async sendEvent(eventName, data) {
-        if (this.systemPrompt && !this.systemPromptSentForCurrentRun) {
-            this.systemPromptSentForCurrentRun = true;
-            await this.sendEvent("system_prompt", {
-                source: "system",
-                type: "text",
-                text: this.systemPrompt,
-            });
-        }
         const body = {
             hookEvent: eventName,
             runId: this.runId,
             event: { ...(data ?? {}) },
             bourneVersion: BOURNE_VERSION,
         };
+        if (this.parentRunId !== undefined) {
+            body.parentRunId = this.parentRunId;
+        }
         if (this.sessionId !== undefined) {
             body.sessionId = this.sessionId;
         }
         if (this.user && this.hasUserField(this.user)) {
             body.user = { ...this.user };
+        }
+        const agentPayload = this.buildAgentPayload();
+        if (agentPayload) {
+            body.agent = agentPayload;
         }
         const url = `${this.baseUrl}/hooks`;
         const response = await fetch(url, {
@@ -133,8 +141,26 @@ class PermisoCustomHooksClient {
     async endRun(stopReason = "end_turn") {
         const response = await this.sendEvent("stop", { source: "stop", stopReason });
         this.runId = (0, crypto_1.randomUUID)();
-        this.systemPromptSentForCurrentRun = false;
         return response;
+    }
+    buildAgentPayload() {
+        const { systemPrompt, name, id } = this.agent;
+        const out = {};
+        if (systemPrompt !== undefined) {
+            out.systemPrompt = systemPrompt;
+        }
+        if (name !== undefined) {
+            out.name = name;
+        }
+        if (id !== undefined) {
+            out.id = id;
+        }
+        return this.hasAgentField(out) ? out : undefined;
+    }
+    hasAgentField(agent) {
+        return (agent.systemPrompt !== undefined ||
+            agent.name !== undefined ||
+            agent.id !== undefined);
     }
     hasUserField(user) {
         return user.email !== undefined || user.id !== undefined || user.name !== undefined;

@@ -1,2 +1,2 @@
 export { PermisoCustomHooksClient, PermisoCustomHooksError } from "./client";
-export type { PermisoCustomHooksConfig, PermisoUser, CustomHooksResponse, } from "./types";
+export type { PermisoAgentContext, PermisoCustomHooksConfig, PermisoUser, CustomHooksResponse, } from "./types";

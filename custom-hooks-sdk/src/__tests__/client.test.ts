@@ -4,96 +4,166 @@ const mockFetch = jest.fn();
 
 beforeEach(() => {
   mockFetch.mockReset();
-  (global as any).fetch = mockFetch;
+  (global as unknown as { fetch: typeof mockFetch }).fetch = mockFetch;
 });
+
+function okJson(obj: object) {
+  return {
+    ok: true,
+    status: 200,
+    text: () => Promise.resolve(JSON.stringify(obj)),
+  };
+}
 
 describe("PermisoCustomHooksClient", () => {
   const baseUrl = "https://api.example.com";
   const apiKey = "test-api-key";
 
   describe("sendEvent", () => {
-    it("sends first request without session_id and stores sessionId from response", async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        text: () => Promise.resolve(JSON.stringify({ sessionId: "sess-123", continue: true })),
-      });
+    it("posts hookEvent, runId, event, and bourneVersion", async () => {
+      mockFetch.mockResolvedValueOnce(okJson({}));
 
       const client = new PermisoCustomHooksClient({ baseUrl, apiKey });
-      const result = await client.sendEvent("session_start");
-
-      expect(result.sessionId).toBe("sess-123");
-      expect(result.continue).toBe(true);
-      expect(client.getSessionId()).toBe("sess-123");
+      await client.sendEvent("session_start");
 
       expect(mockFetch).toHaveBeenCalledTimes(1);
-      const [url, options] = mockFetch.mock.calls[0];
-      expect(url).toBe("https://api.example.com/hooks");
+      const [, options] = mockFetch.mock.calls[0];
       expect(options.method).toBe("POST");
       expect(options.headers["Content-Type"]).toBe("application/json");
       expect(options.headers["x-api-key"]).toBe(apiKey);
       expect(options.headers["X-Hook-Source"]).toBe("custom");
 
-      const body = JSON.parse(options.body);
-      expect(body.hook_event_name).toBe("session_start");
+      const body = JSON.parse(options.body as string);
       expect(body.hookEvent).toBe("session_start");
-      expect(body.session_id).toBeUndefined();
+      expect(body.runId).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+      );
+      expect(body.event).toEqual({});
+      expect(body.bourneVersion).toBe("v2");
+      expect(body.agent).toBeUndefined();
+      expect(body.parentRunId).toBeUndefined();
     });
 
-    it("sends subsequent requests with session_id", async () => {
-      mockFetch
-        .mockResolvedValueOnce({
-          ok: true,
-          status: 200,
-          text: () => Promise.resolve(JSON.stringify({ sessionId: "sess-456", continue: true })),
-        })
-        .mockResolvedValueOnce({
-          ok: true,
-          status: 200,
-          text: () => Promise.resolve(JSON.stringify({ permission: "allow" })),
-        });
+    it("includes sessionId when set on client", async () => {
+      mockFetch.mockResolvedValueOnce(okJson({}));
 
-      const client = new PermisoCustomHooksClient({ baseUrl, apiKey });
-      await client.sendEvent("session_start");
+      const client = new PermisoCustomHooksClient({
+        baseUrl,
+        apiKey,
+        sessionId: "sess-456",
+      });
       await client.sendEvent("my_event", { key: "value" });
 
-      expect(mockFetch).toHaveBeenCalledTimes(2);
-      const secondCallBody = JSON.parse(mockFetch.mock.calls[1][1].body);
-      expect(secondCallBody.session_id).toBe("sess-456");
-      expect(secondCallBody.hook_event_name).toBe("my_event");
-      expect(secondCallBody.key).toBe("value");
+      const body = JSON.parse(mockFetch.mock.calls[0][1].body as string);
+      expect(body.sessionId).toBe("sess-456");
+      expect(body.hookEvent).toBe("my_event");
+      expect(body.event).toEqual({ key: "value" });
     });
 
     it("defaults baseUrl to https://alb.permiso.io when omitted", async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        text: () => Promise.resolve("{}"),
-      });
+      mockFetch.mockResolvedValueOnce(okJson({}));
 
       const client = new PermisoCustomHooksClient({ apiKey });
       await client.sendEvent("event");
 
-      expect(mockFetch).toHaveBeenCalledWith(
-        "https://alb.permiso.io/hooks",
-        expect.any(Object),
-      );
+      expect(mockFetch).toHaveBeenCalledWith("https://alb.permiso.io/hooks", expect.any(Object));
     });
 
     it("uses baseUrl without trailing slash", async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        text: () => Promise.resolve("{}"),
-      });
+      mockFetch.mockResolvedValueOnce(okJson({}));
 
       const client = new PermisoCustomHooksClient({ baseUrl: "https://api.example.com/", apiKey });
       await client.sendEvent("event");
 
-      expect(mockFetch).toHaveBeenCalledWith(
-        "https://api.example.com/hooks",
-        expect.any(Object),
-      );
+      expect(mockFetch).toHaveBeenCalledWith("https://api.example.com/hooks", expect.any(Object));
+    });
+
+    it("sends systemPrompt inside agent with a single request (no system_prompt hook)", async () => {
+      mockFetch.mockResolvedValueOnce(okJson({}));
+
+      const client = new PermisoCustomHooksClient({
+        baseUrl,
+        apiKey,
+        systemPrompt: "Be helpful",
+      });
+      await client.sendEvent("user_prompt", {
+        source: "user",
+        type: "text",
+        text: "Hi",
+      });
+
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      const body = JSON.parse(mockFetch.mock.calls[0][1].body as string);
+      expect(body.hookEvent).toBe("user_prompt");
+      expect(body.agent).toEqual({ systemPrompt: "Be helpful" });
+    });
+
+    it("merges config.agent then applies top-level systemPrompt override", async () => {
+      mockFetch.mockResolvedValueOnce(okJson({}));
+
+      const client = new PermisoCustomHooksClient({
+        baseUrl,
+        apiKey,
+        agent: { name: "A", systemPrompt: "from-agent" },
+        systemPrompt: "from-top",
+      });
+      await client.sendEvent("e1");
+
+      const body = JSON.parse(mockFetch.mock.calls[0][1].body as string);
+      expect(body.agent).toEqual({
+        name: "A",
+        systemPrompt: "from-top",
+      });
+    });
+
+    it("includes parentRunId at top level when configured", async () => {
+      mockFetch.mockResolvedValueOnce(okJson({}));
+
+      const client = new PermisoCustomHooksClient({
+        baseUrl,
+        apiKey,
+        parentRunId: "parent-uuid-1",
+      });
+      await client.sendEvent("x");
+
+      const body = JSON.parse(mockFetch.mock.calls[0][1].body as string);
+      expect(body.parentRunId).toBe("parent-uuid-1");
+      expect(body.runId).not.toBe("parent-uuid-1");
+    });
+
+    it("reflects setAgent on subsequent requests", async () => {
+      mockFetch.mockResolvedValueOnce(okJson({})).mockResolvedValueOnce(okJson({}));
+
+      const client = new PermisoCustomHooksClient({ baseUrl, apiKey });
+      await client.sendEvent("a");
+      client.setAgent({ name: "Sub", id: "sub-9" });
+      await client.sendEvent("b");
+
+      const first = JSON.parse(mockFetch.mock.calls[0][1].body as string);
+      expect(first.agent).toBeUndefined();
+
+      const second = JSON.parse(mockFetch.mock.calls[1][1].body as string);
+      expect(second.agent).toEqual({ name: "Sub", id: "sub-9" });
+    });
+
+    it("updates agent systemPrompt via setSystemPrompt on next send", async () => {
+      mockFetch.mockResolvedValueOnce(okJson({})).mockResolvedValueOnce(okJson({}));
+
+      const client = new PermisoCustomHooksClient({
+        baseUrl,
+        apiKey,
+        systemPrompt: "one",
+      });
+      await client.sendEvent("e1");
+      client.setSystemPrompt("two");
+      await client.sendEvent("e2");
+
+      expect(JSON.parse(mockFetch.mock.calls[0][1].body as string).agent).toEqual({
+        systemPrompt: "one",
+      });
+      expect(JSON.parse(mockFetch.mock.calls[1][1].body as string).agent).toEqual({
+        systemPrompt: "two",
+      });
     });
 
     it("throws PermisoCustomHooksError on non-2xx", async () => {
@@ -107,58 +177,27 @@ describe("PermisoCustomHooksClient", () => {
       const client = new PermisoCustomHooksClient({ baseUrl, apiKey });
       const promise = client.sendEvent("event");
       await expect(promise).rejects.toThrow(PermisoCustomHooksError);
-      const err = await promise.catch((e: unknown) => e);
+      const err = (await promise.catch((e: unknown) => e)) as PermisoCustomHooksError;
       expect(err).toMatchObject({
         status: 401,
         body: expect.stringContaining("Invalid API key"),
       });
-      expect(client.getSessionId()).toBeUndefined();
-    });
-
-    it("does not update sessionId on error", async () => {
-      mockFetch
-        .mockResolvedValueOnce({
-          ok: true,
-          status: 200,
-          text: () => Promise.resolve(JSON.stringify({ sessionId: "sess-1" })),
-        })
-        .mockResolvedValueOnce({
-          ok: false,
-          status: 500,
-          statusText: "Internal Server Error",
-          text: () => Promise.resolve(""),
-        });
-
-      const client = new PermisoCustomHooksClient({ baseUrl, apiKey });
-      await client.sendEvent("first");
-      expect(client.getSessionId()).toBe("sess-1");
-
-      await expect(client.sendEvent("second")).rejects.toThrow(PermisoCustomHooksError);
-      expect(client.getSessionId()).toBe("sess-1");
     });
   });
 
-  describe("endSession", () => {
-    it("sends stop event", async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        text: () => Promise.resolve("{}"),
-      });
+  describe("endRun", () => {
+    it("sends stop event and rotates runId", async () => {
+      mockFetch.mockResolvedValueOnce(okJson({}));
 
       const client = new PermisoCustomHooksClient({ baseUrl, apiKey });
-      await client.endSession();
+      const before = client.getRunId();
+      await client.endRun();
+      const after = client.getRunId();
 
-      const body = JSON.parse(mockFetch.mock.calls[0][1].body);
-      expect(body.hook_event_name).toBe("stop");
+      expect(before).not.toBe(after);
+      const body = JSON.parse(mockFetch.mock.calls[0][1].body as string);
       expect(body.hookEvent).toBe("stop");
-    });
-  });
-
-  describe("getSessionId", () => {
-    it("returns undefined before any successful response with sessionId", () => {
-      const client = new PermisoCustomHooksClient({ baseUrl, apiKey });
-      expect(client.getSessionId()).toBeUndefined();
+      expect(body.event).toMatchObject({ source: "stop", stopReason: "end_turn" });
     });
   });
 });
