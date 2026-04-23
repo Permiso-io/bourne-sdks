@@ -1,0 +1,41 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "test-sdk-py-demo"
+version = "0.1.0"
+description = "Usability tests and mock agents for permiso-custom-hooks-sdk"
+requires-python = ">=3.9"
+dependencies = [
+    "python-dotenv>=1.0.0",
+    "opensearch-py>=2.0.0",
+    "permiso-custom-hooks-sdk @ file:../custom-hooks-sdk-py",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7", "ruff"]
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["test_sdk_py"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = [".", "../custom-hooks-sdk-py/src"]
+addopts = "-q"
+markers = [
+    "e2e: hit live Permiso API and Mach5 OpenSearch (set E2E_MACH5=1 + PERMISO_API_KEY)",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/test_e2e_mach5.py" = ["E402"]
