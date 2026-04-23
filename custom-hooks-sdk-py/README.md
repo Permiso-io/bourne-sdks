@@ -1,6 +1,6 @@
 # permiso-custom-hooks-sdk
 
-Python SDK for the [Permiso](https://permiso.io) Custom Hooks API. Send hook events from your application with automatic run handling: a `run_id` is generated when the client is constructed and sent on every request so events are correlated in the Agent Transaction Dashboard. Call `end_run()` to close out a run and rotate to a fresh `run_id` for subsequent calls.
+Python SDK for the [Permiso](https://permiso.io) Custom Hooks API. Send hook events from your application with automatic run handling: a `run_id` is generated when the client is constructed and sent on every request so events are correlated in the Agent Transaction Dashboard. Call `end_run()` to close out a run and rotate to a fresh `run_id` after a successful stop request.
 
 ## Install
 
@@ -20,7 +20,7 @@ print(client.get_run_id())  # run_id generated in the constructor
 
 client.send_event("user_prompt", {"source": "user", "type": "text", "text": "Hello World"})
 
-# Close out this run: sends a "stop" event, then rotates to a new run_id
+# Close out this run: sends a "stop" event, then rotates to a new run_id after success
 client.end_run()
 
 # Subsequent calls use the new run_id automatically
@@ -36,6 +36,29 @@ client.send_event(
 )
 ```
 
+### Sub-agents (parent and child runs)
+
+```python
+from permiso_custom_hooks import (
+    PermisoAgentContext,
+    PermisoCustomHooksClient,
+    PermisoCustomHooksConfig,
+)
+
+parent = PermisoCustomHooksClient(PermisoCustomHooksConfig(api_key="your-api-secret"))
+parent.send_event("user_prompt", {"source": "user", "type": "text", "text": "Hello"})
+parent_run_id = parent.get_run_id()
+
+sub = PermisoCustomHooksClient(
+    PermisoCustomHooksConfig(
+        api_key="your-api-secret",
+        parent_run_id=parent_run_id,
+        agent=PermisoAgentContext(name="ResearchSubAgent", id="sub-1"),
+    )
+)
+sub.send_event("user_prompt", {"source": "user", "type": "text", "text": "Dig into details"})
+```
+
 ## Request body shape
 
 Every request POSTs to `{base_url}/hooks` with a JSON body shaped like this:
@@ -44,18 +67,26 @@ Every request POSTs to `{base_url}/hooks` with a JSON body shaped like this:
 {
   "hookEvent": "my_custom_event",
   "runId": "b1f0c3d4-....-uuid",
+  "parentRunId": "optional-parent-run-uuid",
   "bourneVersion": "v2",
   "sessionId": "optional-if-set",
   "user": { "email": "jane@example.com", "id": "user-123", "name": "Jane" },
+  "agent": {
+    "systemPrompt": "optional-system-instructions",
+    "name": "optional-agent-name",
+    "id": "optional-custom-agent-id"
+  },
   "event": { }
 }
 ```
 
 - `hookEvent` — the event name passed to `send_event`.
 - `runId` — the current run ID, at the top level of the body.
+- `parentRunId` — *(optional)* included when the client is configured with `parent_run_id` (same level as `runId`).
 - `bourneVersion` — always `"v2"`; set by the SDK on every request.
 - `sessionId` — *(optional)* included only if configured via the `session_id` option or `set_session_id`.
-- `user` — *(optional)* included only if configured via the `user` option or `set_user`; contains any subset of `email`, `id`, and `name`.
+- `user` — *(optional)* end-user metadata; any subset of `email`, `id`, and `name`.
+- `agent` — *(optional)* included when at least one of `systemPrompt`, `name`, or `id` is set; sent on **every** event (no separate `system_prompt` hook).
 - `event` — the payload for this hook; see [Event payload (`event`)](#event-payload-event) below. When you omit `data` in `send_event`, the SDK sends `"event": {}`.
 
 ### Event payload (`event`)
@@ -103,7 +134,7 @@ No `type` property.
 | Field | Required | Description |
 |-------|----------|-------------|
 | `source` | yes | Must be `"stop"`. |
-| `stopReason` | no | One of: `"end_turn"`, `"max_tokens"`, `"stop_sequence"`, `"tool_use"`, `"content_filter"`. `end_run()` currently sends only `{"source": "stop"}`; you may add `stopReason` and `usage` in custom `send_event("stop", ...)` calls if needed. |
+| `stopReason` | no | One of: `"end_turn"`, `"max_tokens"`, `"stop_sequence"`, `"tool_use"`, `"content_filter"`. The client's `end_run(stop_reason=...)` defaults to `"end_turn"`. |
 | `usage` | no | Token usage object (see below). |
 
 **`usage`** when present:
@@ -135,17 +166,20 @@ Do not send properties that are not listed for a variant if your integration is 
 |-------------|-------------|
 | `api_key`   | Your Permiso agent API secret (from the A2M Keys tab in the dashboard). |
 | `base_url`  | *(Optional.)* Base URL of the Permiso API (without `/hooks`). The client POSTs to `{base_url}/hooks`. Defaults to `https://alb.permiso.io`. |
-| `system_prompt` | *(Optional.)* System prompt for the agent. When set, the SDK emits a dedicated `system_prompt` event before the first event of each run (including after `end_run`). |
+| `parent_run_id` | *(Optional.)* Parent run UUID. Sent as top-level `parentRunId` on every request next to `runId` (e.g. sub-agents). |
+| `agent` | *(Optional.)* `PermisoAgentContext` with optional `system_prompt`, `name`, and `id` (agent id, not end-user id). Merged with `system_prompt` when that field is not `None`. |
+| `system_prompt` | *(Optional.)* After `agent` is applied, sets or overrides `agent.systemPrompt` on each request. |
 | `session_id` | *(Optional.)* Session identifier. When set, it is attached as a top-level `sessionId` field on every request. |
 | `user` | *(Optional.)* `PermisoUser` instance (fields: `email`, `id`, `name`) attached as a top-level `user` object on every request. |
+| `raise_on_error` | *(Optional.)* Defaults to `False`. When `False`, `send_event` and `end_run` return `{}` on failure instead of raising; a failed `end_run` does not rotate `run_id`. When `True`, failures raise `PermisoCustomHooksError`. |
 
-All three of `system_prompt`, `session_id`, and `user` can also be configured after construction via `set_system_prompt`, `set_session_id`, and `set_user`.
+`system_prompt`, `session_id`, `user`, and agent fields can be updated after construction via `set_system_prompt`, `set_session_id`, `set_user`, and `set_agent`.
 
 ## Run lifecycle
 
 1. **Construction** — A `run_id` (UUID) is generated in the constructor. Access it via `get_run_id()`.
 2. **Sending events** — Every call to `send_event(...)` includes the current `run_id` at the top level of the body, so all events are tied to the same run.
-3. **Ending a run** — Call `end_run()` to send a `stop` event for the current run. After the request completes, the client rotates to a new `run_id`, so any subsequent `send_event` calls start a fresh run.
+3. **Ending a run** — Call `end_run()` to send a `stop` event for the current run. After the request **succeeds**, the client rotates to a new `run_id`. If the stop request fails and `raise_on_error` is `False` (the default), `end_run` returns `{}` and keeps the same `run_id`.
 
 Run state is kept in memory only. If your process restarts, a new `run_id` is generated automatically when the next client is constructed.
 
@@ -153,27 +187,32 @@ Run state is kept in memory only. If your process restarts, a new `run_id` is ge
 
 ### `PermisoCustomHooksClient`
 
-- **`__init__(config: PermisoCustomHooksConfig)`** — Creates a client with `api_key` and optional `base_url` (defaults to `https://alb.permiso.io`). Also accepts optional `system_prompt`, `session_id`, and `user`. Generates an initial `run_id`.
-- **`send_event(event_name: str, data: dict | None = None) -> dict`** — Sends a hook event. POSTs `{"hookEvent": event_name, "runId": <current>, "event": data or {}, "bourneVersion": "v2"}` to `{base_url}/hooks`, with top-level `sessionId` and `user` included when configured. Returns the API response dict.
-- **`end_run() -> dict`** — Sends a `stop` hook with `event` `{"source": "stop"}` only, then rotates to a new `run_id` for subsequent calls. Also resets the per-run system-prompt flag so the prompt is re-emitted for the next run. To include `stopReason` or `usage`, use `send_event("stop", {...})` instead.
-- **`get_run_id() -> str`** — Returns the current run ID (useful for logging, debugging, or correlating client-side logs with dashboard entries).
-- **`set_system_prompt(prompt: str | None) -> None`** — Sets (or clears) the system prompt. When set, the SDK sends a dedicated `system_prompt` event before the first event of each run (payload: `{"source": "system", "type": "text", "text": <prompt>}`). If the first event of the current run has already been sent, the prompt is emitted before the first event of the next run.
+- **`__init__(config: PermisoCustomHooksConfig)`** — Creates a client from `api_key` and optional `base_url`, `parent_run_id`, `agent`, `system_prompt`, `session_id`, `user`, and `raise_on_error`. Generates an initial `run_id`.
+- **`send_event(event_name: str, data: dict | None = None) -> dict`** — Sends a hook event. POSTs JSON including `hookEvent`, `runId`, `event`, `bourneVersion`, and when configured `parentRunId`, `sessionId`, `user`, and `agent`. On success returns the API response dict. When `raise_on_error` is `False`, failures return `{}` instead of raising.
+- **`end_run(stop_reason: str = "end_turn") -> dict`** — Sends a `stop` hook with `event` `{"source": "stop", "stopReason": <stop_reason>}`, then rotates to a new `run_id` after a **successful** request. When `raise_on_error` is `False`, a failed stop returns `{}` and does not rotate `run_id`.
+- **`get_run_id() -> str`** — Returns the current run ID (useful for logging, correlating logs, or passing as `parent_run_id` for a child client).
+- **`set_system_prompt(prompt: str | None) -> None`** — Sets or clears the system prompt in the top-level `agent` object on every subsequent request.
+- **`set_agent(*, system_prompt=..., name=..., id=...)`** — Merges agent fields; omit a keyword to leave that field unchanged, or pass `None` to clear it from the outbound `agent` payload. (Uses keyword-only arguments.)
 - **`set_session_id(session_id: str | None) -> None`** — Sets (or clears) the session id attached as a top-level `sessionId` on every subsequent request.
-- **`set_user(user: PermisoUser) -> None`** — Merges partial user metadata (`email`, `id`, `name`) into the client's user state. Callers can set just one field without clobbering the others. The resulting object is attached as a top-level `user` on every subsequent request.
+- **`set_user(user: PermisoUser) -> None`** — Merges partial end-user metadata into the client's user state.
 
 ### `PermisoUser`
 
 Dataclass describing optional user metadata: `email`, `id`, `name` (all `str | None`). Instances are passed to the `user` config option and to `set_user`.
 
+### `PermisoAgentContext`
+
+Dataclass with optional `system_prompt`, `name`, and `id` (agent identity; JSON keys are camelCase: `systemPrompt`, `name`, `id`). Used for the `agent` config option and merged with top-level `system_prompt` on construction.
+
 ### `PermisoCustomHooksError`
 
-Raised when the API returns a non-2xx or the request fails. Attributes:
+Raised when `raise_on_error` is `True` and the API returns a non-2xx or the request fails. Attributes:
 
 - `message` — Error message.
 - `status` — HTTP status code (optional).
 - `body` — Response body (optional).
 
-On error, the client does not rotate its `run_id`, so you can retry the same run.
+When `raise_on_error` is `True`, the client does not rotate its `run_id` after a failed `send_event` or failed `end_run`, so you can retry the same run. When `raise_on_error` is `False`, failures return `{}` and `run_id` is unchanged except after a successful `end_run`.
 
 ## Examples
 
