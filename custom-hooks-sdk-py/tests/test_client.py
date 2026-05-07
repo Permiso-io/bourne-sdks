@@ -4,6 +4,7 @@ Tests for PermisoCustomHooksClient.
 
 import json
 import threading
+from typing import Optional
 from unittest.mock import MagicMock, patch
 from urllib.error import HTTPError, URLError
 
@@ -23,7 +24,7 @@ def config() -> PermisoCustomHooksConfig:
     return PermisoCustomHooksConfig(api_key="test-api-key", base_url="https://api.example.com")
 
 
-def _ok_response(payload: dict | None = None) -> MagicMock:
+def _ok_response(payload: Optional[dict] = None) -> MagicMock:
     resp = MagicMock()
     resp.status = 200
     resp.read.return_value = json.dumps(payload or {}).encode("utf-8")
