@@ -60,6 +60,19 @@ const sub = new PermisoCustomHooksClient({
 await sub.sendEvent("user_prompt", { source: "user", type: "text", text: "Dig into details" });
 ```
 
+### Fire-and-forget events
+
+When you do not need to wait for the request to finish or use the response body, call `sendEventBackground` instead of `await sendEvent`. It schedules the same POST and returns immediately.
+
+```typescript
+client.sendEventBackground("my_metric", { kind: "latency_ms", value: 42 });
+```
+
+Tradeoffs:
+
+- No return value and no way to handle failures on the calling stack. Failures are never surfaced here, even when `raiseOnError` is `true` (they are only handled inside the async work started by `sendEvent`).
+- Prefer `await sendEvent` when you need to observe errors or the API response.
+
 ## Request body shape
 
 Every request posts to `{baseUrl}/hooks` with a JSON body shaped like this:
@@ -81,14 +94,14 @@ Every request posts to `{baseUrl}/hooks` with a JSON body shaped like this:
 }
 ```
 
-- `hookEvent` — the event name passed to `sendEvent`.
+- `hookEvent` — the event name passed to `sendEvent` or `sendEventBackground`.
 - `runId` — the current run ID, at the top level of the body.
 - `parentRunId` — *(optional)* included when the client is constructed with `parentRunId` (same level as `runId`) so the backend can link this run to a parent run.
 - `bourneVersion` — always `"v2"`; set by the SDK on every request.
 - `sessionId` — *(optional)* included only if configured via the `sessionId` option or `setSessionId`.
 - `user` — *(optional)* included only if configured via the `user` option or `setUser`; contains any subset of `email`, `id`, and `name` (end-user metadata).
 - `agent` — *(optional)* included when at least one of `systemPrompt`, `name`, or `id` is set; sent on **every** event for the current agent state (no separate `system_prompt` hook).
-- `event` — the payload for this hook; see [Event payload (`event`)](#event-payload-event) below. When you omit `data` in `sendEvent`, the SDK sends `"event": {}`.
+- `event` — the payload for this hook; see [Event payload (`event`)](#event-payload-event) below. When you omit `data` in `sendEvent` or `sendEventBackground`, the SDK sends `"event": {}`.
 
 ### Event payload (`event`)
 
@@ -179,7 +192,7 @@ Do not send properties that are not listed for a variant if your integration is 
 ## Run lifecycle
 
 1. **Construction** — A `runId` (UUID) is generated in the constructor. Access it via `getRunId()`.
-2. **Sending events** — Every call to `sendEvent(...)` includes the current `runId` at the top level of the body, so all events are tied to the same run.
+2. **Sending events** — Every call to `sendEvent(...)` or `sendEventBackground(...)` includes the current `runId` at the top level of the body, so all events are tied to the same run.
 3. **Ending a run** — Call `endRun()` to send a `stop` event for the current run. After the request **succeeds**, the client rotates to a new `runId`, so any subsequent `sendEvent` calls start a fresh run. If the stop request fails and `raiseOnError` is `false` (the default), `endRun` returns `{}` and keeps the same `runId`.
 
 Run state is kept in memory only. If your process restarts, a new `runId` is generated automatically when the next client is constructed.
@@ -190,6 +203,7 @@ Run state is kept in memory only. If your process restarts, a new `runId` is gen
 
 - **`constructor(config: PermisoCustomHooksConfig)`** — Creates a client with `apiKey` and optional `baseUrl` (defaults to `https://alb.permiso.io`). Also accepts optional `parentRunId`, `agent`, `systemPrompt`, `sessionId`, `user`, and `raiseOnError`. Generates an initial `runId`.
 - **`sendEvent(eventName: string, data?: Record<string, unknown>): Promise<CustomHooksResponse>`** — Sends a hook event. Posts `{ hookEvent: eventName, runId, event: data ?? {}, bourneVersion: "v2" }` to `{baseUrl}/hooks`, with top-level `parentRunId`, `sessionId`, `user`, and `agent` included when configured. Returns the API response on success. When `raiseOnError` is `false` (default), failures return `{}` instead of throwing.
+- **`sendEventBackground(eventName: string, data?: Record<string, unknown>): void`** — Same request as `sendEvent`, but does not return a promise to the caller; schedules the work and returns immediately. Errors are never surfaced on the calling stack (see [Fire-and-forget events](#fire-and-forget-events)).
 - **`endRun(stopReason?: string): Promise<CustomHooksResponse>`** — Sends a `stop` hook with `event` `{ source: "stop", stopReason }` (default `stopReason`: `"end_turn"`), then rotates to a new `runId` after a **successful** request. When `raiseOnError` is `false`, a failed stop returns `{}` and does not rotate `runId`.
 - **`getRunId(): string`** — Returns the current run ID (useful for logging, debugging, correlating client-side logs with dashboard entries, or passing as `parentRunId` for a child client).
 - **`setSystemPrompt(prompt: string | undefined): void`** — Sets (or clears) the system prompt included in the top-level `agent` object on every subsequent request.

@@ -65,6 +65,15 @@ export declare class PermisoCustomHooksClient {
      */
     sendEvent(eventName: string, data?: Record<string, unknown>): Promise<CustomHooksResponse>;
     /**
+     * Sends a hook event without awaiting the HTTP response (fire-and-forget).
+     * Delegates to {@link sendEvent}; rejections are swallowed so they never surface as
+     * unhandled promise rejections, including when `raiseOnError` is `true`.
+     *
+     * @param eventName - Hook event name (e.g. "session_start", "my_custom_event"). Sent as hookEvent.
+     * @param data - Optional event payload fields. Sent as the `event` object on the request body.
+     */
+    sendEventBackground(eventName: string, data?: Record<string, unknown>): void;
+    /**
      * Sends a "stop" event for the current run, then rotates to a fresh runId so any
      * subsequent calls to `sendEvent` start a new run.
      *
