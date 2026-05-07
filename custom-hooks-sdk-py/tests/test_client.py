@@ -3,6 +3,7 @@ Tests for PermisoCustomHooksClient.
 """
 
 import json
+import threading
 from unittest.mock import MagicMock, patch
 from urllib.error import HTTPError, URLError
 
@@ -405,3 +406,82 @@ def test_2xx_invalid_json_response_returns_empty_when_no_raise(
     with patch("urllib.request.urlopen", return_value=resp):
         client = PermisoCustomHooksClient(config)
         assert client.send_event("e") == {}
+
+
+def test_send_event_background_triggers_request(config: PermisoCustomHooksConfig) -> None:
+    done = threading.Event()
+
+    def side_effect(*_args: object, **_kwargs: object) -> MagicMock:
+        done.set()
+        return _ok_response()
+
+    with patch("urllib.request.urlopen", side_effect=side_effect):
+        client = PermisoCustomHooksClient(config)
+        client.send_event_background("async_evt", {"n": 1})
+
+    assert done.wait(timeout=5.0)
+
+
+def test_send_event_background_does_not_block_on_slow_http(
+    config: PermisoCustomHooksConfig,
+) -> None:
+    release = threading.Event()
+
+    def blocking_urlopen(*_args: object, **_kwargs: object) -> MagicMock:
+        release.wait(timeout=30.0)
+        return _ok_response()
+
+    with patch("urllib.request.urlopen", side_effect=blocking_urlopen):
+        client = PermisoCustomHooksClient(config)
+        client.send_event_background("blocked")
+    release.set()
+
+
+def test_send_event_background_no_raise_when_http_fails(
+    config: PermisoCustomHooksConfig,
+) -> None:
+    mock_fp = MagicMock()
+    mock_fp.read.return_value = json.dumps({"error": "Invalid API key"}).encode("utf-8")
+    mock_http_error = HTTPError(
+        "https://api.example.com/hooks", 401, "Unauthorized", {}, mock_fp
+    )
+    mock_http_error.read = mock_fp.read
+
+    called = threading.Event()
+
+    def side_effect(*_args: object, **_kwargs: object) -> None:
+        called.set()
+        raise mock_http_error
+
+    with patch("urllib.request.urlopen", side_effect=side_effect):
+        client = PermisoCustomHooksClient(config)
+        client.send_event_background("event")
+
+    assert called.wait(timeout=5.0)
+
+
+def test_send_event_background_swallows_error_when_raise_on_error_true(
+    config: PermisoCustomHooksConfig,
+) -> None:
+    mock_fp = MagicMock()
+    mock_fp.read.return_value = json.dumps({"error": "Invalid API key"}).encode("utf-8")
+    mock_http_error = HTTPError(
+        "https://api.example.com/hooks", 401, "Unauthorized", {}, mock_fp
+    )
+    mock_http_error.read = mock_fp.read
+
+    cfg = PermisoCustomHooksConfig(
+        api_key=config.api_key, base_url=config.base_url, raise_on_error=True
+    )
+
+    called = threading.Event()
+
+    def side_effect(*_args: object, **_kwargs: object) -> None:
+        called.set()
+        raise mock_http_error
+
+    with patch("urllib.request.urlopen", side_effect=side_effect):
+        client = PermisoCustomHooksClient(cfg)
+        client.send_event_background("event")
+
+    assert called.wait(timeout=5.0)
