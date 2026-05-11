@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 import urllib.error
 import urllib.request
 import uuid
@@ -239,8 +240,9 @@ class PermisoCustomHooksClient:
         """
         Send a hook event to the Permiso Custom Hooks endpoint.
 
-        The request body includes ``hookEvent``, ``runId``, ``event``, ``bourneVersion``, and when
-        configured ``parentRunId``, ``sessionId``, ``user``, and ``agent``.
+        The request body includes ``hookEvent``, ``runId``, ``event``, ``bourneVersion``,
+        ``clientSentAtMs`` (Unix epoch milliseconds when the body was built), and when configured
+        ``parentRunId``, ``sessionId``, ``user``, and ``agent``.
 
         Args:
             event_name: Hook event name (e.g. "session_start", "my_custom_event"). Sent as
@@ -336,6 +338,7 @@ class PermisoCustomHooksClient:
             "runId": self._run_id,
             "event": data or {},
             "bourneVersion": BOURNE_VERSION,
+            "clientSentAtMs": int(time.time() * 1000),
         }
         if self._parent_run_id is not None:
             body["parentRunId"] = self._parent_run_id
