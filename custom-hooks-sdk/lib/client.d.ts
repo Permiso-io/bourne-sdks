@@ -53,9 +53,10 @@ export declare class PermisoCustomHooksClient {
     setUser(user: PermisoUser): void;
     /**
      * Sends a hook event to the Permiso Custom Hooks endpoint.
-     * The request body has the shape `{ hookEvent, runId, event, bourneVersion }`: `hookEvent` is the event
-     * name, `runId` is the current run ID at the top level of the body, and `event` is an
-     * object containing the optional payload fields from `data`. When configured,
+     * The request body has the shape `{ hookEvent, runId, event, bourneVersion, clientSentAtMs }`:
+     * `hookEvent` is the event name, `runId` is the current run ID at the top level of the body,
+     * `event` is an object containing the optional payload fields from `data`, and `clientSentAtMs`
+     * is wall-clock Unix epoch milliseconds when the SDK built the request. When configured,
      * `parentRunId`, `sessionId`, `user`, and `agent` are also attached at the top level.
      *
      * @param eventName - Hook event name (e.g. "session_start", "my_custom_event"). Sent as hookEvent.
