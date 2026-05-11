@@ -45,13 +45,28 @@ def test_sends_request_with_expected_body_shape(config: PermisoCustomHooksConfig
     assert req.headers.get("X-hook-source") == "custom"
 
     body = json.loads(req.data.decode("utf-8"))
-    assert {"hookEvent", "runId", "event", "bourneVersion"}.issubset(body.keys())
+    assert {"hookEvent", "runId", "event", "bourneVersion", "clientSentAtMs"}.issubset(body.keys())
     assert body["hookEvent"] == "my_event"
     assert body["bourneVersion"] == "v2"
     assert body["runId"] == client.get_run_id()
     assert body["event"] == {"key": "value"}
+    assert isinstance(body["clientSentAtMs"], int)
     assert "hook_event_name" not in body
     assert "session_id" not in body
+
+
+def test_client_sent_at_ms_matches_int_time_ms(
+    config: PermisoCustomHooksConfig,
+) -> None:
+    """clientSentAtMs is int(time.time() * 1000) at dispatch."""
+    fixed_epoch_s = 1_700_000_000.0
+    with patch("permiso_custom_hooks.client.time.time", return_value=fixed_epoch_s):
+        with patch("urllib.request.urlopen", return_value=_ok_response()) as mock_urlopen:
+            client = PermisoCustomHooksClient(config)
+            client.send_event("ticked")
+
+    body = json.loads(mock_urlopen.call_args[0][0].data.decode("utf-8"))
+    assert body["clientSentAtMs"] == int(fixed_epoch_s * 1000)
 
 
 def test_send_event_without_data_sends_empty_event_object(
@@ -92,6 +107,7 @@ def test_end_run_sends_stop_then_rotates_run_id(config: PermisoCustomHooksConfig
     assert body["hookEvent"] == "stop"
     assert body["runId"] == original_run_id
     assert body["event"] == {"source": "stop", "stopReason": "end_turn"}
+    assert isinstance(body["clientSentAtMs"], int)
 
     new_run_id = client.get_run_id()
     assert new_run_id != original_run_id
