@@ -7,6 +7,10 @@ beforeEach(() => {
   (global as unknown as { fetch: typeof mockFetch }).fetch = mockFetch;
 });
 
+afterEach(() => {
+  jest.restoreAllMocks();
+});
+
 function okJson(obj: object) {
   return {
     ok: true,
@@ -20,7 +24,8 @@ describe("PermisoCustomHooksClient", () => {
   const apiKey = "test-api-key";
 
   describe("sendEvent", () => {
-    it("posts hookEvent, runId, event, and bourneVersion", async () => {
+    it("posts hookEvent, runId, event, bourneVersion, and clientSentAtMs", async () => {
+      jest.spyOn(Date, "now").mockReturnValue(1_700_000_000_000);
       mockFetch.mockResolvedValueOnce(okJson({}));
 
       const client = new PermisoCustomHooksClient({ baseUrl, apiKey });
@@ -40,6 +45,7 @@ describe("PermisoCustomHooksClient", () => {
       );
       expect(body.event).toEqual({});
       expect(body.bourneVersion).toBe("v2");
+      expect(body.clientSentAtMs).toBe(1_700_000_000_000);
       expect(body.agent).toBeUndefined();
       expect(body.parentRunId).toBeUndefined();
     });
@@ -216,6 +222,55 @@ describe("PermisoCustomHooksClient", () => {
     });
   });
 
+  describe("sendEventBackground", () => {
+    it("posts the same request shape as sendEvent after async completion", async () => {
+      mockFetch.mockResolvedValueOnce(okJson({}));
+
+      const client = new PermisoCustomHooksClient({ baseUrl, apiKey });
+      client.sendEventBackground("bg_evt", { k: "v" });
+
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      const body = JSON.parse(mockFetch.mock.calls[0][1].body as string);
+      expect(body.hookEvent).toBe("bg_evt");
+      expect(body.event).toEqual({ k: "v" });
+    });
+
+    it("does not block until fetch resolves", async () => {
+      let resolveFetch!: (value: ReturnType<typeof okJson>) => void;
+      const pending = new Promise<ReturnType<typeof okJson>>((res) => {
+        resolveFetch = res;
+      });
+      mockFetch.mockImplementationOnce(() => pending);
+
+      const client = new PermisoCustomHooksClient({ baseUrl, apiKey });
+      client.sendEventBackground("blocked");
+
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+
+      resolveFetch(okJson({}));
+      await pending;
+      await Promise.resolve();
+    });
+
+    it("does not throw synchronously when raiseOnError is true and request fails", async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 401,
+        statusText: "Unauthorized",
+        text: () => Promise.resolve(JSON.stringify({ error: "Invalid API key" })),
+      });
+
+      const client = new PermisoCustomHooksClient({ baseUrl, apiKey, raiseOnError: true });
+      expect(() => client.sendEventBackground("event")).not.toThrow();
+
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+  });
+
   describe("endRun", () => {
     it("sends stop event and rotates runId", async () => {
       mockFetch.mockResolvedValueOnce(okJson({}));
@@ -229,6 +284,8 @@ describe("PermisoCustomHooksClient", () => {
       const body = JSON.parse(mockFetch.mock.calls[0][1].body as string);
       expect(body.hookEvent).toBe("stop");
       expect(body.event).toMatchObject({ source: "stop", stopReason: "end_turn" });
+      expect(body.clientSentAtMs).toEqual(expect.any(Number));
+      expect(Number.isInteger(body.clientSentAtMs)).toBe(true);
     });
 
     it("does not rotate runId when stop fails and raiseOnError is false", async () => {

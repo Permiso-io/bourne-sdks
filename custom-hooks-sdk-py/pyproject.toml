@@ -1,13 +1,14 @@
 [build-system]
-requires = ["hatchling"]
+# Cap hatchling: 1.27+ emits metadata 2.4; twine <5.1 fails uploads (misleading missing Name/Version).
+requires = ["hatchling>=1.24,<1.27"]
 build-backend = "hatchling.build"
 
 [project]
 name = "permiso-custom-hooks-sdk"
-version = "0.1.2"
+version = "0.1.4"
 description = "SDK for Permiso Custom Hooks API — send hook events with automatic run handling"
 readme = "README.md"
-license = "MIT"
+license = { text = "MIT" }
 requires-python = ">=3.9"
 authors = [{ name = "devel-permiso-io" }]
 keywords = ["permiso", "hooks", "sdk", "security"]
@@ -23,15 +24,16 @@ classifiers = [
 
 [project.optional-dependencies]
 dev = ["pytest>=7", "ruff", "python-dotenv>=1.0.0"]
+publish = ["build>=1.2", "twine>=5.1"]
 
 [project.urls]
-Repository = "https://github.com/Permiso-io/arbiter"
+Repository = "https://github.com/Permiso-io/bourne-sdks/tree/main/custom-hooks-sdk-py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/permiso_custom_hooks"]
 
 [tool.hatch.build.targets.sdist]
-include = ["src/permiso_custom_hooks"]
+include = ["src/permiso_custom_hooks", "LICENSE"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

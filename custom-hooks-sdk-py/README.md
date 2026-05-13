@@ -59,6 +59,19 @@ sub = PermisoCustomHooksClient(
 sub.send_event("user_prompt", {"source": "user", "type": "text", "text": "Dig into details"})
 ```
 
+### Fire-and-forget events
+
+When you do not need to wait for the HTTP request to finish (and do not need the response dict), use `send_event_background(...)` instead of `send_event(...)`. The SDK performs the same POST on a daemon background thread and returns immediately.
+
+```python
+client.send_event_background("my_metric", {"kind": "latency_ms", "value": 42})
+```
+
+Tradeoffs:
+
+- No return value and no way to observe failures on the calling thread. Errors are never raised to the caller from `send_event_background`, even when `raise_on_error` is `True` (failures are handled inside the worker thread only).
+- Uses one OS thread per call; for very high throughput, prefer batching or a dedicated queue/worker instead.
+
 ## Request body shape
 
 Every request POSTs to `{base_url}/hooks` with a JSON body shaped like this:
@@ -80,7 +93,7 @@ Every request POSTs to `{base_url}/hooks` with a JSON body shaped like this:
 }
 ```
 
-- `hookEvent` — the event name passed to `send_event`.
+- `hookEvent` — the event name passed to `send_event` or `send_event_background`.
 - `runId` — the current run ID, at the top level of the body.
 - `parentRunId` — *(optional)* included when the client is configured with `parent_run_id` (same level as `runId`).
 - `bourneVersion` — always `"v2"`; set by the SDK on every request.
@@ -178,7 +191,7 @@ Do not send properties that are not listed for a variant if your integration is 
 ## Run lifecycle
 
 1. **Construction** — A `run_id` (UUID) is generated in the constructor. Access it via `get_run_id()`.
-2. **Sending events** — Every call to `send_event(...)` includes the current `run_id` at the top level of the body, so all events are tied to the same run.
+2. **Sending events** — Every call to `send_event(...)` or `send_event_background(...)` includes the current `run_id` at the top level of the body, so all events are tied to the same run.
 3. **Ending a run** — Call `end_run()` to send a `stop` event for the current run. After the request **succeeds**, the client rotates to a new `run_id`. If the stop request fails and `raise_on_error` is `False` (the default), `end_run` returns `{}` and keeps the same `run_id`.
 
 Run state is kept in memory only. If your process restarts, a new `run_id` is generated automatically when the next client is constructed.
@@ -189,6 +202,7 @@ Run state is kept in memory only. If your process restarts, a new `run_id` is ge
 
 - **`__init__(config: PermisoCustomHooksConfig)`** — Creates a client from `api_key` and optional `base_url`, `parent_run_id`, `agent`, `system_prompt`, `session_id`, `user`, and `raise_on_error`. Generates an initial `run_id`.
 - **`send_event(event_name: str, data: dict | None = None) -> dict`** — Sends a hook event. POSTs JSON including `hookEvent`, `runId`, `event`, `bourneVersion`, and when configured `parentRunId`, `sessionId`, `user`, and `agent`. On success returns the API response dict. When `raise_on_error` is `False`, failures return `{}` instead of raising.
+- **`send_event_background(event_name: str, data: dict | None = None) -> None`** — Same request as `send_event`, but runs on a background thread and returns immediately. Does not return the API response; errors are never raised on the calling thread (see [Fire-and-forget events](#fire-and-forget-events)).
 - **`end_run(stop_reason: str = "end_turn") -> dict`** — Sends a `stop` hook with `event` `{"source": "stop", "stopReason": <stop_reason>}`, then rotates to a new `run_id` after a **successful** request. When `raise_on_error` is `False`, a failed stop returns `{}` and does not rotate `run_id`.
 - **`get_run_id() -> str`** — Returns the current run ID (useful for logging, correlating logs, or passing as `parent_run_id` for a child client).
 - **`set_system_prompt(prompt: str | None) -> None`** — Sets or clears the system prompt in the top-level `agent` object on every subsequent request.

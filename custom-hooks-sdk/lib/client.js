@@ -85,9 +85,10 @@ class PermisoCustomHooksClient {
     }
     /**
      * Sends a hook event to the Permiso Custom Hooks endpoint.
-     * The request body has the shape `{ hookEvent, runId, event, bourneVersion }`: `hookEvent` is the event
-     * name, `runId` is the current run ID at the top level of the body, and `event` is an
-     * object containing the optional payload fields from `data`. When configured,
+     * The request body has the shape `{ hookEvent, runId, event, bourneVersion, clientSentAtMs }`:
+     * `hookEvent` is the event name, `runId` is the current run ID at the top level of the body,
+     * `event` is an object containing the optional payload fields from `data`, and `clientSentAtMs`
+     * is wall-clock Unix epoch milliseconds when the SDK built the request. When configured,
      * `parentRunId`, `sessionId`, `user`, and `agent` are also attached at the top level.
      *
      * @param eventName - Hook event name (e.g. "session_start", "my_custom_event"). Sent as hookEvent.
@@ -105,6 +106,19 @@ class PermisoCustomHooksClient {
             }
             return {};
         }
+    }
+    /**
+     * Sends a hook event without awaiting the HTTP response (fire-and-forget).
+     * Delegates to {@link sendEvent}; rejections are swallowed so they never surface as
+     * unhandled promise rejections, including when `raiseOnError` is `true`.
+     *
+     * @param eventName - Hook event name (e.g. "session_start", "my_custom_event"). Sent as hookEvent.
+     * @param data - Optional event payload fields. Sent as the `event` object on the request body.
+     */
+    sendEventBackground(eventName, data) {
+        void this.sendEvent(eventName, data).catch(() => {
+            // callers never observe failures here.
+        });
     }
     /**
      * Sends a "stop" event for the current run, then rotates to a fresh runId so any
@@ -133,6 +147,7 @@ class PermisoCustomHooksClient {
                 runId: this.runId,
                 event: { ...(data ?? {}) },
                 bourneVersion: BOURNE_VERSION,
+                clientSentAtMs: Date.now(),
             };
             if (this.parentRunId !== undefined) {
                 body.parentRunId = this.parentRunId;

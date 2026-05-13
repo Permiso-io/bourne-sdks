@@ -5,6 +5,8 @@ Client for the Permiso Custom Hooks API.
 from __future__ import annotations
 
 import json
+import threading
+import time
 import urllib.error
 import urllib.request
 import uuid
@@ -238,8 +240,9 @@ class PermisoCustomHooksClient:
         """
         Send a hook event to the Permiso Custom Hooks endpoint.
 
-        The request body includes ``hookEvent``, ``runId``, ``event``, ``bourneVersion``, and when
-        configured ``parentRunId``, ``sessionId``, ``user``, and ``agent``.
+        The request body includes ``hookEvent``, ``runId``, ``event``, ``bourneVersion``,
+        ``clientSentAtMs`` (Unix epoch milliseconds when the body was built), and when configured
+        ``parentRunId``, ``sessionId``, ``user``, and ``agent``.
 
         Args:
             event_name: Hook event name (e.g. "session_start", "my_custom_event"). Sent as
@@ -260,6 +263,43 @@ class PermisoCustomHooksClient:
             if self._raise_on_error:
                 raise
             return {}
+
+    def send_event_background(
+        self,
+        event_name: str,
+        data: dict[str, Any] | None = None,
+    ) -> None:
+        """
+        Send a hook event without blocking the caller.
+
+        The HTTP request runs on a daemon background thread. There is no return value and
+        errors are never raised to the caller: failures are handled according to
+        ``raise_on_error`` inside the thread (same as :meth:`send_event`), but exceptions are
+        never propagated across threads.
+
+        Args:
+            event_name: Hook event name. Sent as ``hookEvent``.
+            data: Optional event payload fields. Sent as the ``event`` object on the request body.
+        """
+        thread = threading.Thread(
+            target=self._send_event_background_worker,
+            args=(event_name, data),
+            daemon=True,
+            name="permiso-send-event-background",
+        )
+        thread.start()
+
+    def _send_event_background_worker(
+        self,
+        event_name: str,
+        data: dict[str, Any] | None,
+    ) -> None:
+        try:
+            self.send_event(event_name, data)
+        except Exception:
+            # Background sends never surface errors to the caller, including when
+            # ``raise_on_error`` is True (same semantics as fire-and-forget).
+            pass
 
     def end_run(self, stop_reason: str = "end_turn") -> dict[str, Any]:
         """
@@ -298,6 +338,7 @@ class PermisoCustomHooksClient:
             "runId": self._run_id,
             "event": data or {},
             "bourneVersion": BOURNE_VERSION,
+            "clientSentAtMs": int(time.time() * 1000),
         }
         if self._parent_run_id is not None:
             body["parentRunId"] = self._parent_run_id
