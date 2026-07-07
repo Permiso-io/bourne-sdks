@@ -41,6 +41,14 @@ await client.sendEvent("web_fetch", {
   toolUseId: "toolu_01abc",
   input: { url: "https://example.com" },
 });
+
+await client.sendEvent("tool_result", {
+  source: "agent",
+  type: "tool_result",
+  name: "WebFetch",
+  toolUseId: "toolu_01abc",
+  content: '{"status":200}',
+});
 ```
 
 ### Sub-agents (parent and child runs)
@@ -133,7 +141,7 @@ On every variant, these fields are optional unless noted otherwise:
 | `"text"` | `text` | — |
 | `"thinking"` | `thinking` | `thinkingBudget`, `signature` |
 | `"tool_use"` | `name`, `toolUseId` | `input` (any JSON) |
-| `"tool_result"` | `toolUseId` | `content`, `isError` |
+| `"tool_result"` | `toolUseId` | `name`, `content`, `isError` |
 | `"image"` | `image` (blob) | — |
 | `"document"` | `document` (blob) | — |
 

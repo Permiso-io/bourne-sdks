@@ -1,5 +1,6 @@
 import { randomUUID } from "crypto";
 
+import type { PermisoHookEventPayload } from "./events";
 import type {
   PermisoAgentContext,
   PermisoCustomHooksConfig,
@@ -128,7 +129,7 @@ export class PermisoCustomHooksClient {
    */
   async sendEvent(
     eventName: string,
-    data?: Record<string, unknown>,
+    data?: PermisoHookEventPayload | Record<string, unknown>,
   ): Promise<CustomHooksResponse> {
     try {
       return await this.dispatchHookEvent(eventName, data);
@@ -148,7 +149,10 @@ export class PermisoCustomHooksClient {
    * @param eventName - Hook event name (e.g. "session_start", "my_custom_event"). Sent as hookEvent.
    * @param data - Optional event payload fields. Sent as the `event` object on the request body.
    */
-  sendEventBackground(eventName: string, data?: Record<string, unknown>): void {
+  sendEventBackground(
+    eventName: string,
+    data?: PermisoHookEventPayload | Record<string, unknown>,
+  ): void {
     void this.sendEvent(eventName, data).catch(() => {
       // callers never observe failures here.
     });
@@ -176,7 +180,7 @@ export class PermisoCustomHooksClient {
 
   private async dispatchHookEvent(
     eventName: string,
-    data?: Record<string, unknown>,
+    data?: PermisoHookEventPayload | Record<string, unknown>,
   ): Promise<CustomHooksResponse> {
     try {
       const body: Record<string, unknown> = {

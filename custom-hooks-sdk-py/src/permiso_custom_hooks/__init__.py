@@ -8,13 +8,17 @@ from .client import (
     PermisoCustomHooksConfig,
     PermisoUser,
 )
+from .events import AgentToolResultEvent, ToolResultEvent, UserToolResultEvent
 from .exceptions import PermisoCustomHooksError
 
 __all__ = [
+    "AgentToolResultEvent",
     "PermisoAgentContext",
     "PermisoCustomHooksClient",
     "PermisoCustomHooksConfig",
     "PermisoCustomHooksError",
     "PermisoUser",
+    "ToolResultEvent",
+    "UserToolResultEvent",
 ]
-__version__ = "0.1.4"
+__version__ = "0.1.5"

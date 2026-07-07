@@ -1,3 +1,4 @@
+import type { PermisoHookEventPayload } from "./events";
 import type { PermisoAgentContext, PermisoCustomHooksConfig, CustomHooksResponse, PermisoUser } from "./types";
 /**
  * Error thrown when the Custom Hooks API returns a non-2xx or the request fails.
@@ -64,7 +65,7 @@ export declare class PermisoCustomHooksClient {
      * @returns The API response, or `{}` when `raiseOnError` is `false` and the request fails.
      * @throws PermisoCustomHooksError when `raiseOnError` is `true` and the request fails (non-2xx, invalid JSON, or transport error).
      */
-    sendEvent(eventName: string, data?: Record<string, unknown>): Promise<CustomHooksResponse>;
+    sendEvent(eventName: string, data?: PermisoHookEventPayload | Record<string, unknown>): Promise<CustomHooksResponse>;
     /**
      * Sends a hook event without awaiting the HTTP response (fire-and-forget).
      * Delegates to {@link sendEvent}; rejections are swallowed so they never surface as
@@ -73,7 +74,7 @@ export declare class PermisoCustomHooksClient {
      * @param eventName - Hook event name (e.g. "session_start", "my_custom_event"). Sent as hookEvent.
      * @param data - Optional event payload fields. Sent as the `event` object on the request body.
      */
-    sendEventBackground(eventName: string, data?: Record<string, unknown>): void;
+    sendEventBackground(eventName: string, data?: PermisoHookEventPayload | Record<string, unknown>): void;
     /**
      * Sends a "stop" event for the current run, then rotates to a fresh runId so any
      * subsequent calls to `sendEvent` start a new run.
