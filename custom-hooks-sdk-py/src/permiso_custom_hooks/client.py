@@ -11,7 +11,9 @@ import urllib.error
 import urllib.request
 import uuid
 from dataclasses import dataclass
-from typing import Any, Final
+from typing import Any, Final, Union
+
+from .events import ToolResultEvent
 
 from .exceptions import PermisoCustomHooksError
 
@@ -235,7 +237,7 @@ class PermisoCustomHooksClient:
     def send_event(
         self,
         event_name: str,
-        data: dict[str, Any] | None = None,
+        data: Union[ToolResultEvent, dict[str, Any], None] = None,
     ) -> dict[str, Any]:
         """
         Send a hook event to the Permiso Custom Hooks endpoint.
@@ -267,7 +269,7 @@ class PermisoCustomHooksClient:
     def send_event_background(
         self,
         event_name: str,
-        data: dict[str, Any] | None = None,
+        data: Union[ToolResultEvent, dict[str, Any], None] = None,
     ) -> None:
         """
         Send a hook event without blocking the caller.
@@ -292,7 +294,7 @@ class PermisoCustomHooksClient:
     def _send_event_background_worker(
         self,
         event_name: str,
-        data: dict[str, Any] | None,
+        data: Union[ToolResultEvent, dict[str, Any], None],
     ) -> None:
         try:
             self.send_event(event_name, data)
@@ -331,7 +333,7 @@ class PermisoCustomHooksClient:
     def _dispatch_hook_event(
         self,
         event_name: str,
-        data: dict[str, Any] | None = None,
+        data: Union[ToolResultEvent, dict[str, Any], None] = None,
     ) -> dict[str, Any]:
         body: dict[str, Any] = {
             "hookEvent": event_name,

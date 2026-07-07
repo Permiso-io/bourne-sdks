@@ -220,6 +220,28 @@ describe("PermisoCustomHooksClient", () => {
       const client = new PermisoCustomHooksClient({ baseUrl, apiKey, raiseOnError: true });
       await expect(client.sendEvent("event")).rejects.toThrow(PermisoCustomHooksError);
     });
+
+    it("includes name on tool_result events", async () => {
+      mockFetch.mockResolvedValueOnce(okJson({}));
+
+      const client = new PermisoCustomHooksClient({ baseUrl, apiKey });
+      await client.sendEvent("tool_result", {
+        source: "agent",
+        type: "tool_result",
+        name: "WebFetch",
+        toolUseId: "toolu_01abc",
+        content: '{"status":200}',
+      });
+
+      const body = JSON.parse(mockFetch.mock.calls[0][1].body as string);
+      expect(body.event).toEqual({
+        source: "agent",
+        type: "tool_result",
+        name: "WebFetch",
+        toolUseId: "toolu_01abc",
+        content: '{"status":200}',
+      });
+    });
   });
 
   describe("sendEventBackground", () => {

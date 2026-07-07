@@ -9,7 +9,7 @@
     "access": "public",
     "registry": "https://registry.npmjs.org/"
   },
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "SDK for Permiso Custom Hooks API — send hook events with automatic run handling",
   "license": "MIT",
   "main": "lib/index.js",

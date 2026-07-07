@@ -502,3 +502,27 @@ def test_send_event_background_swallows_error_when_raise_on_error_true(
         client.send_event_background("event")
 
     assert called.wait(timeout=5.0)
+
+
+def test_tool_result_event_includes_name(config: PermisoCustomHooksConfig) -> None:
+    with patch("urllib.request.urlopen", return_value=_ok_response()) as mock_urlopen:
+        client = PermisoCustomHooksClient(config)
+        client.send_event(
+            "tool_result",
+            {
+                "source": "agent",
+                "type": "tool_result",
+                "name": "WebFetch",
+                "toolUseId": "toolu_01abc",
+                "content": '{"status":200}',
+            },
+        )
+
+    body = json.loads(mock_urlopen.call_args[0][0].data.decode("utf-8"))
+    assert body["event"] == {
+        "source": "agent",
+        "type": "tool_result",
+        "name": "WebFetch",
+        "toolUseId": "toolu_01abc",
+        "content": '{"status":200}',
+    }
